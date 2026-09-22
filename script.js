@@ -12,6 +12,7 @@ const polylineMap = new Map();
 let watchId = null, timerInterval = null, startTime = null, totalElapsed = 0;
 let userMarker = null, accuracyCircle = null, isGpsRecording = false;
 let currentLineData = null, currentPolyline = null;
+let lastAltitude = null;
 
 const colorPalette = document.getElementById('colorPalette');
 const customColorInput = document.getElementById('customColor');
@@ -21,7 +22,7 @@ const deleteSelect = document.getElementById('deleteSelect');
 const gpsDrawBtn = document.getElementById('gpsDrawBtn');
 const statsPanel = document.getElementById('statsPanel');
 
-// Spalvų pasirinkimas
+// Spalvų pasirinkimas ir spalvos ratas
 colors.forEach((color, i) => {
     const swatch = document.createElement('div');
     swatch.className = `color-swatch ${i === 0 ? 'selected' : ''}`;
@@ -59,7 +60,7 @@ const calcDist = (pts) => {
 
 function createPolyline(line) {
     const poly = L.polyline(line.points, { color: line.color, weight: 5 })
-        .bindPopup(`<b>#${line.id}: ${line.name}</b><br>Atstumas: ${formatDist(line.distance)}<br>Trukmė: ${formatTime(line.duration || 0)}`)
+        .bindPopup(`<b>#${line.id}: ${line.name}</b><br>Atstumas: ${formatDist(line.distance)}<br>Trukmė: ${formatTime(line.duration || 0)}<br>Sukilimas: ${Math.round(line.elevationGain || 0)} m`)
         .addTo(map);
     polylineMap.set(line.id, poly);
 }
@@ -87,11 +88,13 @@ gpsDrawBtn.onclick = () => isGpsRecording ? stopGps() : startGps();
 function startGps() {
     if (!('geolocation' in navigator)) return alert('GPS nepalaikomas');
 
+    lastAltitude = null;
     const isContinue = document.querySelector('input[name="lineOption"]:checked').value === 'continue';
     if (isContinue && linesData.length > 0) {
         const id = parseInt(lineSelect.value);
         currentLineData = linesData.find(l => l.id === id);
         currentLineData.color = selectedColor;
+        currentLineData.elevationGain = currentLineData.elevationGain || 0;
         currentPolyline = polylineMap.get(id);
         currentPolyline.setStyle({ color: selectedColor });
         totalElapsed = currentLineData.duration || 0;
@@ -100,7 +103,7 @@ function startGps() {
         currentLineData = {
             id, name: lineNameInput.value.trim() || `Maršrutas ${id}`,
             color: selectedColor, date: new Date().toLocaleString('lt-LT'),
-            distance: 0, duration: 0, points: []
+            distance: 0, duration: 0, elevationGain: 0, points: []
         };
         linesData.push(currentLineData);
         createPolyline(currentLineData);
@@ -119,7 +122,7 @@ function startGps() {
 }
 
 function onGps(pos) {
-    const { latitude: lat, longitude: lng, accuracy, speed } = pos.coords;
+    const { latitude: lat, longitude: lng, accuracy, speed, altitude } = pos.coords;
     const pt = [lat, lng];
 
     if (!userMarker) {
@@ -136,10 +139,26 @@ function onGps(pos) {
         pts.push(pt);
     }
 
+    // Aukščio padidėjimo skaičiavimas (filtracija nuo >1.5 m nuokrypių)
+    if (altitude !== null && altitude !== undefined) {
+        if (lastAltitude !== null) {
+            const diff = altitude - lastAltitude;
+            if (diff > 1.5) {
+                currentLineData.elevationGain = (currentLineData.elevationGain || 0) + diff;
+                lastAltitude = altitude;
+            } else if (diff < -1.5) {
+                lastAltitude = altitude;
+            }
+        } else {
+            lastAltitude = altitude;
+        }
+    }
+
     currentLineData.distance = calcDist(pts);
     currentPolyline.setLatLngs(pts);
 
     document.getElementById('statSpeed').textContent = `${(speed > 0 ? speed * 3.6 : 0).toFixed(1)} km/h`;
+    document.getElementById('statElevation').textContent = `${Math.round(currentLineData.elevationGain || 0)} m`;
     updateStats();
 }
 
@@ -155,7 +174,7 @@ function updateStats() {
     const hrs = totalElapsed / 3600;
     document.getElementById('statAvgSpeed').textContent = `${(hrs > 0 && km > 0 ? km / hrs : 0).toFixed(1)} km/h`;
 
-    currentPolyline.setPopupContent(`<b>#${currentLineData.id}: ${currentLineData.name}</b><br>Atstumas: ${formatDist(currentLineData.distance)}<br>Trukmė: ${formatTime(totalElapsed)}`);
+    currentPolyline.setPopupContent(`<b>#${currentLineData.id}: ${currentLineData.name}</b><br>Atstumas: ${formatDist(currentLineData.distance)}<br>Trukmė: ${formatTime(totalElapsed)}<br>Sukilimas: ${Math.round(currentLineData.elevationGain || 0)} m`);
     localStorage.setItem('myNumberedLines', JSON.stringify(linesData));
 }
 
@@ -170,7 +189,7 @@ function stopGps() {
     if (userMarker) { map.removeLayer(userMarker); userMarker = null; }
     if (accuracyCircle) { map.removeLayer(accuracyCircle); accuracyCircle = null; }
 
-    statsPanel.classList.add('hidden'); // Paslepia laiko ir greičio bloką sustabdžius
+    statsPanel.classList.add('hidden');
     updateSelects();
 }
 

@@ -3,42 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Žemėlapis ir Maršrutai</title>
+    <title>GPS Pasivaikščiojimų Žemėlapis</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
     <div class="menu-panel">
-        <button id="toggleMenuBtn">Braižymo meniu</button>
+        <button id="toggleMenuBtn">Valdymo meniu</button>
         
         <div id="drawMenu" class="draw-menu hidden">
-            <h3>Braižymo nustatymai</h3>
+            <h3>Maršruto Nustatymai</h3>
             
-            <label for="lineName">Linijos pavadinimas:</label>
-            <input type="text" id="lineName" placeholder="Pvz., Dviračių takas">
+            <label for="lineName">Maršruto pavadinimas:</label>
+            <input type="text" id="lineName" placeholder="Pvz., Rytinis pasivaikščiojimas">
 
             <label>Pasirinkite spalvą:</label>
             <div id="colorPalette" class="color-palette"></div>
-            
-            <div class="custom-color-wrapper">
-                <label for="customColor">Pasirinktinė spalva:</label>
-                <input type="color" id="customColor" value="#e6194B">
-            </div>
 
             <label>Režimas:</label>
             <div class="radio-group">
-                <label><input type="radio" name="lineOption" value="new" checked> Nauja linija</label>
-                <label><input type="radio" name="lineOption" value="continue"> Tęsti esamą liniją</label>
+                <label><input type="radio" name="lineOption" value="new" checked> Naujas maršrutas</label>
+                <label><input type="radio" name="lineOption" value="continue"> Tęsti esamą maršrutą</label>
             </div>
 
             <select id="lineSelect" class="hidden">
                 <!-- Užsipildo dinamiškai -->
             </select>
 
-            <button id="startDrawBtn">Braižyti pele</button>
-            <button id="stopDrawBtn" class="hidden">Baigti braižybą pele</button>
-            <button id="gpsDrawBtn" class="gps-btn">Sekioti su GPS</button>
+            <button id="gpsDrawBtn" class="gps-btn">Pradėti GPS įrašymą</button>
+
+            <!-- Realaus laiko statistikos panelė -->
+            <div id="statsPanel" class="stats-panel hidden">
+                <h4>Pasivaikščiojimo duomenys</h4>
+                <div class="stat-grid">
+                    <div class="stat-box">
+                        <span class="stat-label">Trukmė</span>
+                        <span id="statTime" class="stat-value">00:00:00</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Atstumas</span>
+                        <span id="statDistance" class="stat-value">0 m</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Esamas greitis</span>
+                        <span id="statSpeed" class="stat-value">0.0 km/h</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Vid. greitis</span>
+                        <span id="statAvgSpeed" class="stat-value">0.0 km/h</span>
+                    </div>
+                </div>
+            </div>
 
             <hr>
 

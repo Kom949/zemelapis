@@ -1,0 +1,143 @@
+body {
+    margin: 0;
+    font-family: sans-serif;
+}
+
+#map {
+    height: 100vh;
+    width: 100vw;
+}
+
+.menu-panel {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.draw-menu {
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    margin-top: 8px;
+    width: 250px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.draw-menu.hidden, button.hidden, select.hidden {
+    display: none;
+}
+
+.draw-menu h3 {
+    margin: 0;
+    font-size: 15px;
+}
+
+label {
+    font-size: 13px;
+    font-weight: bold;
+}
+
+input[type="text"], select {
+    width: 100%;
+    padding: 6px;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.color-palette {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+}
+
+.color-swatch {
+    width: 100%;
+    height: 24px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    box-sizing: border-box;
+}
+
+.color-swatch.selected {
+    border-color: #000;
+    transform: scale(1.1);
+}
+
+.custom-color-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.custom-color-wrapper input[type="color"] {
+    width: 40px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 13px;
+}
+
+hr {
+    border: 0;
+    border-top: 1px solid #ddd;
+    margin: 5px 0;
+}
+
+.delete-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+button {
+    padding: 8px 12px;
+    font-size: 14px;
+    font-weight: bold;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+#startDrawBtn { background: #28a745; }
+#stopDrawBtn { background: #dc3545; }
+
+.gps-btn {
+    background: #17a2b8;
+}
+
+.gps-btn.active {
+    background: #ffc107;
+    color: #000;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.6; }
+    100% { opacity: 1; }
+}
+
+.danger-btn { background: #dc3545; }
+.danger-btn:hover { background: #c82333; }

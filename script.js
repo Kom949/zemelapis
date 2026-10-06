@@ -1,6 +1,8 @@
+// 1. Inicijuojame žemėlapį
 const map = L.map('map').setView([54.74622, 25.21294], 13);
 L.tileLayer('https://api.maptiler.com/maps/topo-v4/256/{z}/{x}/{y}.png?key=fyz6kNYuQtvSwaBwX6CJ', {
-    attribution: '&copy; MapTiler &copy; OpenStreetMap'
+    attribution: '&copy; MapTiler &copy; OpenStreetMap',
+    maxZoom: 19
 }).addTo(map);
 
 const colors = ['#2563eb', '#10b981', '#f43f5e', '#f59e0b', '#8b5cf6'];
@@ -22,7 +24,18 @@ const deleteSelect = document.getElementById('deleteSelect');
 const gpsDrawBtn = document.getElementById('gpsDrawBtn');
 const statsPanel = document.getElementById('statsPanel');
 
-// Spalvų pasirinkimas ir spalvos ratas
+// Kortelės elementai apačioje
+const infoCard = document.getElementById('info-card');
+const cardTitle = document.getElementById('card-title');
+const cardDuration = document.getElementById('card-duration');
+const cardSpeed = document.getElementById('card-speed');
+const cardElevation = document.getElementById('card-elevation');
+const cardDate = document.getElementById('card-date');
+const closeBtn = document.getElementById('close-btn');
+
+closeBtn.onclick = () => infoCard.classList.add('hidden');
+
+// Spalvų paletės generavimas
 colors.forEach((color, i) => {
     const swatch = document.createElement('div');
     swatch.className = `color-swatch ${i === 0 ? 'selected' : ''}`;
@@ -58,10 +71,28 @@ const calcDist = (pts) => {
     return d;
 };
 
+// Sukuriame liniją ir priskiriame paspaudimo įvykį mobiliai kortelei atidaryti
 function createPolyline(line) {
-    const poly = L.polyline(line.points, { color: line.color, weight: 5 })
-        .bindPopup(`<b>#${line.id}: ${line.name}</b><br>Atstumas: ${formatDist(line.distance)}<br>Trukmė: ${formatTime(line.duration || 0)}<br>Sukilimas: ${Math.round(line.elevationGain || 0)} m`)
+    const poly = L.polyline(line.points, { color: line.color, weight: 6, opacity: 0.85 })
         .addTo(map);
+
+    poly.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        
+        cardTitle.textContent = `#${line.id}: ${line.name}`;
+        cardDuration.textContent = formatTime(line.duration || 0);
+        
+        const km = (line.distance || 0) / 1000;
+        const hrs = (line.duration || 0) / 3600;
+        const avgSpd = hrs > 0 && km > 0 ? (km / hrs).toFixed(1) + ' km/h' : '0.0 km/h';
+        cardSpeed.textContent = avgSpd;
+        
+        cardElevation.textContent = `${Math.round(line.elevationGain || 0)} m`;
+        cardDate.textContent = line.date || '-';
+
+        infoCard.classList.remove('hidden');
+    });
+
     polylineMap.set(line.id, poly);
 }
 
@@ -88,8 +119,10 @@ gpsDrawBtn.onclick = () => isGpsRecording ? stopGps() : startGps();
 function startGps() {
     if (!('geolocation' in navigator)) return alert('GPS nepalaikomas');
 
+    infoCard.classList.add('hidden');
     lastAltitude = null;
     const isContinue = document.querySelector('input[name="lineOption"]:checked').value === 'continue';
+    
     if (isContinue && linesData.length > 0) {
         const id = parseInt(lineSelect.value);
         currentLineData = linesData.find(l => l.id === id);
@@ -101,8 +134,8 @@ function startGps() {
     } else {
         const id = linesData.length ? Math.max(...linesData.map(l => l.id)) + 1 : 1;
         currentLineData = {
-            id, name: lineNameInput.value.trim() || `Maršrutas ${id}`,
-            color: selectedColor, date: new Date().toLocaleString('lt-LT'),
+            id, name: lineNameInput.value.trim() || `Žygis ${id}`,
+            color: selectedColor, date: new Date().toLocaleDateString('lt-LT'),
             distance: 0, duration: 0, elevationGain: 0, points: []
         };
         linesData.push(currentLineData);
@@ -126,7 +159,7 @@ function onGps(pos) {
     const pt = [lat, lng];
 
     if (!userMarker) {
-        userMarker = L.circleMarker(pt, { radius: 6, fillColor: '#2563eb', color: '#fff', weight: 2, fillOpacity: 1 }).addTo(map);
+        userMarker = L.circleMarker(pt, { radius: 7, fillColor: '#2563eb', color: '#fff', weight: 2, fillOpacity: 1 }).addTo(map);
         accuracyCircle = L.circle(pt, { radius: accuracy, color: '#2563eb', fillOpacity: 0.1, weight: 1 }).addTo(map);
     } else {
         userMarker.setLatLng(pt);
@@ -139,7 +172,6 @@ function onGps(pos) {
         pts.push(pt);
     }
 
-    // Aukščio padidėjimo skaičiavimas (filtracija nuo >1.5 m nuokrypių)
     if (altitude !== null && altitude !== undefined) {
         if (lastAltitude !== null) {
             const diff = altitude - lastAltitude;
@@ -174,7 +206,6 @@ function updateStats() {
     const hrs = totalElapsed / 3600;
     document.getElementById('statAvgSpeed').textContent = `${(hrs > 0 && km > 0 ? km / hrs : 0).toFixed(1)} km/h`;
 
-    currentPolyline.setPopupContent(`<b>#${currentLineData.id}: ${currentLineData.name}</b><br>Atstumas: ${formatDist(currentLineData.distance)}<br>Trukmė: ${formatTime(totalElapsed)}<br>Sukilimas: ${Math.round(currentLineData.elevationGain || 0)} m`);
     localStorage.setItem('myNumberedLines', JSON.stringify(linesData));
 }
 
@@ -191,6 +222,7 @@ function stopGps() {
 
     statsPanel.classList.add('hidden');
     updateSelects();
+    localStorage.setItem('myNumberedLines', JSON.stringify(linesData));
 }
 
 document.getElementById('deleteSelectedBtn').onclick = () => {
@@ -201,4 +233,5 @@ document.getElementById('deleteSelectedBtn').onclick = () => {
     linesData = linesData.filter(l => l.id !== id);
     localStorage.setItem('myNumberedLines', JSON.stringify(linesData));
     updateSelects();
+    infoCard.classList.add('hidden');
 };

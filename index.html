@@ -2,12 +2,13 @@
 <html lang="lt">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GPS Žemėlapis</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GPS Žygio Žemėlapis</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- Meniu skydelis viršuje dešinėje -->
     <div class="menu-panel">
         <button id="toggleMenuBtn">Meniu</button>
         <div id="drawMenu" class="draw-menu hidden">
@@ -41,7 +42,22 @@
         </div>
     </div>
 
+    <!-- Žemėlapis -->
     <div id="map"></div>
+
+    <!-- Estetiška kortelė mobiliesiems apačioje, rodoma paspaudus ant maršruto -->
+    <div id="info-card" class="hidden">
+        <div class="card-header">
+            <h3 id="card-title">Maršrutas</h3>
+            <button id="close-btn">&times;</button>
+        </div>
+        <div class="card-body">
+            <div class="stat-item"><span>Trukmė:</span> <strong id="card-duration">-</strong></div>
+            <div class="stat-item"><span>Vid. greitis:</span> <strong id="card-speed">-</strong></div>
+            <div class="stat-item"><span>Sukilimas:</span> <strong id="card-elevation">-</strong></div>
+            <div class="stat-item"><span>Data:</span> <strong id="card-date">-</strong></div>
+        </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="script.js"></script>

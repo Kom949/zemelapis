@@ -1,36 +1,184 @@
-body { margin: 0; font-family: system-ui, sans-serif; color: #1e293b; }
-#map { height: 100vh; width: 100vw; }
-
-.menu-panel { position: absolute; top: 10px; right: 10px; z-index: 1000; }
-.draw-menu {
-    background: #fff; padding: 12px; border-radius: 10px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.15); width: 230px;
-    display: flex; flex-direction: column; gap: 8px; font-size: 13px;
+body, html {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
-.hidden { display: none !important; }
 
-input[type="text"], select { width: 100%; padding: 6px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; }
+#map {
+    height: 100vh;
+    width: 100vw;
+    z-index: 1;
+}
 
-.color-palette { display: flex; gap: 6px; }
-.color-swatch { flex: 1; height: 26px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; }
-.color-swatch.selected { border-color: #0f172a; transform: scale(1.05); }
+.menu-panel {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+}
 
-.color-custom { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #64748b; }
-.color-custom input { border: none; width: 28px; height: 28px; cursor: pointer; background: none; }
+.draw-menu {
+    background: #fff;
+    padding: 12px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    width: 250px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+    margin-top: 6px;
+}
 
-.radio-group { display: flex; gap: 10px; }
+.hidden {
+    display: none !important;
+}
+
+input[type="text"], select {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    box-sizing: border-box;
+}
+
+.color-palette {
+    display: flex;
+    gap: 6px;
+}
+
+.color-swatch {
+    flex: 1;
+    height: 26px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 2px solid transparent;
+}
+
+.color-swatch.selected {
+    border-color: #0f172a;
+    transform: scale(1.05);
+}
+
+.color-custom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.color-custom input {
+    border: none;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    background: none;
+}
+
+.radio-group {
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+}
 
 button {
-    padding: 8px; font-weight: 600; background: #0f172a; color: #fff;
-    border: none; border-radius: 6px; cursor: pointer;
+    padding: 9px;
+    font-weight: 600;
+    background: #0f172a;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
 }
+
 .gps-btn { background: #2563eb; }
 .gps-btn.active { background: #dc2626; }
 .danger-btn { background: #ef4444; }
 
 .stats-panel {
-    background: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;
-    display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px;
+    background: #f8fafc;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    font-size: 11px;
 }
-.stats-panel b { display: block; font-size: 13px; color: #0f172a; }
-hr { border: 0; border-top: 1px solid #e2e8f0; margin: 4px 0; }
+
+.stats-panel b {
+    display: block;
+    font-size: 13px;
+    color: #0f172a;
+}
+
+hr {
+    border: 0;
+    border-top: 1px solid #e2e8f0;
+    margin: 4px 0;
+}
+
+/* Mobiliesiems skirta apatinė iššokanti kortelė paspaudus ant maršruto */
+#info-card {
+    position: fixed;
+    bottom: 20px;
+    left: 15px;
+    right: 15px;
+    max-width: 400px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+    z-index: 2000;
+    padding: 16px;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+#info-card.hidden {
+    transform: translateY(150%);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+}
+
+.card-header h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #1e293b;
+}
+
+#close-btn {
+    background: none;
+    border: none;
+    font-size: 22px;
+    cursor: pointer;
+    color: #888;
+    padding: 0 5px;
+}
+
+.card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.stat-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    color: #555;
+}
+
+.stat-item strong {
+    color: #111;
+}

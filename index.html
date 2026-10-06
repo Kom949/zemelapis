@@ -2,62 +2,115 @@
 <html lang="lt">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#ffffff">
     <title>GPS Žygio Žemėlapis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- Meniu skydelis viršuje dešinėje -->
-    <div class="menu-panel">
-        <button id="toggleMenuBtn">Meniu</button>
-        <div id="drawMenu" class="draw-menu hidden">
-            <input type="text" id="lineName" placeholder="Maršruto pavadinimas">
-            
-            <div id="colorPalette" class="color-palette"></div>
-            <div class="color-custom">
-                <label for="customColor">Spalvos ratas:</label>
-                <input type="color" id="customColor" value="#2563eb">
-            </div>
 
-            <div class="radio-group">
-                <label><input type="radio" name="lineOption" value="new" checked> Naujas</label>
-                <label><input type="radio" name="lineOption" value="continue"> Tęsti esamą</label>
-            </div>
-            <select id="lineSelect" class="hidden"></select>
-
-            <button id="gpsDrawBtn" class="gps-btn">Pradėti GPS įrašymą</button>
-
-            <div id="statsPanel" class="stats-panel hidden">
-                <div>Trukmė: <b id="statTime">00:00</b></div>
-                <div>Atstumas: <b id="statDistance">0 m</b></div>
-                <div>Greitis: <b id="statSpeed">0.0 km/h</b></div>
-                <div>Vid. greitis: <b id="statAvgSpeed">0.0 km/h</b></div>
-                <div>Sukilimas: <b id="statElevation">0 m</b></div>
-            </div>
-
-            <hr>
-            <select id="deleteSelect"><option value="">-- Pasirinkite ištrinti --</option></select>
-            <button id="deleteSelectedBtn" class="danger-btn">Ištrinti</button>
+    <!-- Socialinė skiltis -->
+    <div id="tab-social" class="tab-content">
+        <div class="empty-tab-message">
+            <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>Socialinė skiltis netrukus</span>
         </div>
     </div>
 
-    <!-- Žemėlapis -->
-    <div id="map"></div>
+    <!-- Įrašymo skiltis -->
+    <div id="tab-record" class="tab-content active">
+        <div id="map"></div>
 
-    <!-- Estetiška kortelė mobiliesiems apačioje, rodoma paspaudus ant maršruto -->
-    <div id="info-card" class="hidden">
+        <div class="menu-panel">
+            <button id="toggleMenuBtn" aria-label="Meniu">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>
+                Meniu
+            </button>
+
+            <div id="drawMenu" class="draw-menu hidden">
+                <label class="field-label">Maršruto pavadinimas</label>
+                <input type="text" id="lineName" placeholder="Pvz. Rytinis žygis">
+
+                <label class="field-label">Spalva</label>
+                <div class="color-row">
+                    <div id="colorPalette" class="color-palette"></div>
+                    <input type="color" id="customColor" value="#2563eb" title="Pasirinkti spalvą">
+                </div>
+
+                <div class="segmented">
+                    <label><input type="radio" name="lineOption" value="new" checked><span>Naujas</span></label>
+                    <label><input type="radio" name="lineOption" value="continue"><span>Tęsti esamą</span></label>
+                </div>
+                <select id="lineSelect" class="hidden"></select>
+
+                <button id="gpsDrawBtn" class="gps-btn">Pradėti GPS įrašymą</button>
+
+                <div class="divider"></div>
+                <label class="field-label">Ištrinti maršrutą</label>
+                <select id="deleteSelect"><option value="">-- Pasirinkite --</option></select>
+                <button id="deleteSelectedBtn" class="danger-btn">Ištrinti</button>
+            </div>
+        </div>
+
+        <!-- Statistika įrašymo metu -->
+        <div id="statsPanel" class="stats-bar hidden">
+            <div class="rec-dot"></div>
+            <div class="stat"><span>Trukmė</span><b id="statTime">00:00</b></div>
+            <div class="stat"><span>Atstumas</span><b id="statDistance">0 m</b></div>
+            <div class="stat"><span>Greitis</span><b id="statSpeed">0.0 km/h</b></div>
+            <div class="stat"><span>Vidurkis</span><b id="statAvgSpeed">0.0 km/h</b></div>
+            <div class="stat"><span>Kilimas</span><b id="statElevation">0 m</b></div>
+        </div>
+    </div>
+
+    <!-- Buvusių maršrutų skiltis -->
+    <div id="tab-history" class="tab-content">
+        <div id="map-history"></div>
+        <button id="fitAllBtn" class="fab-chip" aria-label="Rodyti visus maršrutus">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+            Rodyti visus
+        </button>
+        <div id="history-empty" class="hidden">Dar nėra išsaugotų žygių</div>
+    </div>
+
+    <!-- Iššokantis ekranėlis iš apačios -->
+    <div id="info-card" class="hidden" role="dialog" aria-label="Maršruto informacija">
+        <div class="sheet-handle"></div>
         <div class="card-header">
-            <h3 id="card-title">Maršrutas</h3>
-            <button id="close-btn">&times;</button>
+            <span id="card-dot" class="card-dot"></span>
+            <div class="card-titles">
+                <h3 id="card-title">Maršrutas</h3>
+                <small id="card-date">-</small>
+            </div>
+            <button id="close-btn" aria-label="Uždaryti">&times;</button>
         </div>
-        <div class="card-body">
-            <div class="stat-item"><span>Trukmė:</span> <strong id="card-duration">-</strong></div>
-            <div class="stat-item"><span>Vid. greitis:</span> <strong id="card-speed">-</strong></div>
-            <div class="stat-item"><span>Sukilimas:</span> <strong id="card-elevation">-</strong></div>
-            <div class="stat-item"><span>Data:</span> <strong id="card-date">-</strong></div>
+        <div class="card-grid">
+            <div class="tile"><span>Atstumas</span><strong id="card-distance">-</strong></div>
+            <div class="tile"><span>Trukmė</span><strong id="card-duration">-</strong></div>
+            <div class="tile"><span>Vid. greitis</span><strong id="card-speed">-</strong></div>
+            <div class="tile"><span>Sukilimas</span><strong id="card-elevation">-</strong></div>
         </div>
     </div>
+
+    <!-- Apatinis meniu -->
+    <nav class="bottom-nav">
+        <button class="nav-item" data-tab="social">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>Socialinė</span>
+        </button>
+        <button class="nav-item active" data-tab="record">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></svg>
+            <span>Įrašymas</span>
+        </button>
+        <button class="nav-item" data-tab="history">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+            <span>Buvę</span>
+        </button>
+    </nav>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="script.js"></script>

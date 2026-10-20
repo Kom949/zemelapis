@@ -208,9 +208,8 @@ function showRouteCard(line, poly) {
     cardElevation.textContent = `${Math.round(line.elevationGain || 0)} m`;
     cardDate.textContent = `${a.label} · ${whenText(line)}`;
     document.querySelectorAll('.act-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === line.id));
-    setDrawer(true);
     const item = document.querySelector(`.act-item[data-id="${line.id}"]`);
-    if (item) item.scrollIntoView({ block: 'nearest' });
+    if (item && document.getElementById('history-list').classList.contains('open')) item.scrollIntoView({ block: 'nearest' });
     infoCard.classList.remove('hidden');
 }
 
@@ -313,6 +312,7 @@ async function uzkrautiIsSupabase() {
             activity: item.activity || getTypeMap()[item.id] || 'walk'
         }));
         updateSelects();
+        checkDraft();
     }
 }
 
@@ -538,9 +538,47 @@ function releaseWakeLock() {
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 }
 // Grįžus į programėlę ekrano užraktas atnaujinamas
+const GPS_OPTS = { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 };
+const DRAFT_KEY = 'zygiaiDraft';
+
+function saveDraft() {
+    if (!isGpsRecording || !currentLineData) return;
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ line: currentLineData, startTime, savedAt: Date.now() })); } catch (e) {}
+}
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+
 document.addEventListener('visibilitychange', () => {
-    if (isGpsRecording && document.visibilityState === 'visible') acquireWakeLock();
+    if (!isGpsRecording) return;
+    if (document.visibilityState === 'hidden') { saveDraft(); return; }
+    // Grįžus į programėlę: atnaujiname ekrano užraktą, GPS stebėjimą ir laikmatį
+    acquireWakeLock();
+    navigator.geolocation.clearWatch(watchId);
+    watchId = navigator.geolocation.watchPosition(onGps, onGpsError, GPS_OPTS);
+    updateStats();
 });
+window.addEventListener('pagehide', saveDraft);
+
+// Nebaigto įrašymo atkūrimas (jei naršyklė užmigdė ar uždarė puslapį)
+async function checkDraft() {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
+    if (!d || !d.line) return;
+    const l = d.line;
+    const fresh = Date.now() - d.savedAt < 6 * 3600 * 1000;
+    if (fresh && confirm(`Rastas nebaigtas įrašas „${l.name}“. Tęsti įrašymą?\n\n(Atšaukus jis bus išsaugotas toks, koks yra.)`)) {
+        startGps(d);
+        return;
+    }
+    clearDraft();
+    if (l.points && l.points.length > 1 && l.distance >= 10) {
+        if (l.startedAt) l.endedAt = hm(new Date(d.savedAt));
+        await isaugotiISupabase(l);
+        const idx = l.id != null ? linesData.findIndex(x => x.id === l.id) : -1;
+        if (idx >= 0) linesData[idx] = l; else linesData.push(l);
+        updateSelects();
+        if (mapHistory) renderHistoryPolylines();
+    }
+}
 
 const median = (arr) => {
     const s = [...arr].sort((a, b) => a - b);
@@ -554,13 +592,17 @@ function defaultName(type) {
     return `${part} ${ACTIVITIES[type].noun}`;
 }
 
-function startGps() {
+function startGps(resume) {
     if (!('geolocation' in navigator)) return alert('GPS nepalaikomas');
 
     closeCard();
     const isContinue = document.querySelector('input[name="lineOption"]:checked').value === 'continue';
 
-    if (isContinue) {
+    if (resume) {
+        currentLineData = resume.line;
+        selectedActivity = currentLineData.activity || selectedActivity;
+        totalElapsed = currentLineData.duration || 0;
+    } else if (isContinue) {
         const id = parseInt(lineSelect.value);
         currentLineData = linesData.find(l => l.id === id);
         if (!currentLineData) return alert('Pasirinkite maršrutą');
@@ -586,13 +628,15 @@ function startGps() {
 
     // Išvalome filtrų būseną
     lastFix = null; rejectedInRow = 0;
+    if (resume && currentLineData.points.length) {
+        lastFix = { pt: currentLineData.points[currentLineData.points.length - 1], t: resume.savedAt };
+    }
     curSpeed = 0; lastMoveTime = 0;
     altWindow = []; smoothAlt = null; anchorAlt = null;
 
-    watchId = navigator.geolocation.watchPosition(onGps, onGpsError, {
-        enableHighAccuracy: true, maximumAge: 0, timeout: 20000
-    });
+    watchId = navigator.geolocation.watchPosition(onGps, onGpsError, GPS_OPTS);
     startTime = Date.now() - totalElapsed * 1000;
+    if (resume) startTime = resume.startTime;   // laikas, praleistas užmigus ekranui, įskaičiuojamas
     timerInterval = setInterval(updateStats, 1000);
     acquireWakeLock();
 
@@ -698,6 +742,7 @@ function updateStats() {
     if (!isGpsRecording || !currentLineData) return;
     totalElapsed = Math.floor((Date.now() - startTime) / 1000);
     currentLineData.duration = totalElapsed;
+    if (totalElapsed % 5 === 0) saveDraft();
 
     // Nejudant greitis krenta į 0
     if (Date.now() - lastMoveTime > STILL_TIMEOUT) curSpeed = 0;
@@ -711,6 +756,7 @@ function updateStats() {
 async function stopGps(save = true) {
     if (!isGpsRecording) return;
     isGpsRecording = false;
+    clearDraft();
     navigator.geolocation.clearWatch(watchId);
     clearInterval(timerInterval);
     releaseWakeLock();

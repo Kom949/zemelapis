@@ -13,11 +13,42 @@ const DEFAULT_ZOOM = 13;
 const LINE_WEIGHT = 6;
 const LINE_WEIGHT_ACTIVE = 10;
 
+const ICONS = {
+    walk: '<circle cx="13" cy="4" r="2"/><path d="M12 8l-2 5 3 3v5M10 13l-3 2M12 8l4 3"/>',
+    hike: '<path d="M3 20l6-11 4 6 3-4 5 9z"/>',
+    run: '<circle cx="14" cy="4" r="2"/><path d="M13 8l-3 4 4 2 1 6M10 12l-4 1M13 8l4 3h3"/>',
+    bike: '<circle cx="5.5" cy="17" r="3.5"/><circle cx="18.5" cy="17" r="3.5"/><path d="M5.5 17l4-8h5l4 8M9.5 9l2.5 8M14 6h2"/>',
+    other: '<path d="M5 21V4M5 4h12l-2 4 2 4H5"/>'
+};
+const ACTIVITIES = {
+    walk:  { label: 'Ėjimas',   noun: 'ėjimas',     pace: true,  maxSpeed: 8,  minStep: 5 },
+    hike:  { label: 'Žygis',    noun: 'žygis',      pace: true,  maxSpeed: 8,  minStep: 5 },
+    run:   { label: 'Bėgimas',  noun: 'bėgimas',    pace: true,  maxSpeed: 12, minStep: 5 },
+    bike:  { label: 'Dviratis', noun: 'važiavimas', pace: false, maxSpeed: 25, minStep: 8 },
+    other: { label: 'Kita',     noun: 'užsiėmimas', pace: false, maxSpeed: 30, minStep: 8 }
+};
+let selectedActivity = 'walk';
+const iconSvg = (type, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[type] || ICONS.other}</svg>`;
+
+function fmtSpeedFor(type, ms) {   // ms = m/s
+    const a = ACTIVITIES[type] || ACTIVITIES.walk;
+    if (a.pace) {
+        if (!(ms > 0.3)) return '--';
+        const sec = Math.round(1000 / ms);
+        return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')} /km`;
+    }
+    return `${(ms * 3.6).toFixed(1)} km/h`;
+}
+// Veiklos tipas saugomas ir lokaliai, jei lentelėje nėra stulpelio „activity“
+const getTypeMap = () => { try { return JSON.parse(localStorage.getItem('zygiaiTipai') || '{}'); } catch (e) { return {}; } };
+const setLocalType = (id, t) => { try { const m = getTypeMap(); m[id] = t; localStorage.setItem('zygiaiTipai', JSON.stringify(m)); } catch (e) {} };
+
 let map = null;
 let mapHistory = null;
 const historyPolylineMap = new Map();
+let historyHalo = null;
 
-const colors = ['#2563eb', '#10b981', '#f43f5e', '#f59e0b', '#8b5cf6'];
+const colors = ['#1f6feb', '#0e9f6e', '#e11d48', '#f59e0b', '#8b5cf6'];
 let selectedColor = colors[0];
 let linesData = [];
 
@@ -27,8 +58,8 @@ let currentLineData = null, currentPolyline = null;
 
 // ---- GPS filtravimo parametrai ----
 const MAX_ACCURACY = 25;        // m  – fiksavimai, blogesni už šį, ignoruojami
-const MIN_STEP = 5;             // m  – mažiausias žingsnis (be to, bent tiek, kiek paklaida)
-const MAX_SPEED = 12;           // m/s – greitesni šuoliai laikomi GPS klaida (~43 km/h)
+let MIN_STEP = 5;               // m  – priklauso nuo veiklos tipo
+let MAX_SPEED = 12;             // m/s – priklauso nuo veiklos tipo
 const MAX_ALT_ACCURACY = 15;    // m  – blogesnio aukščio tikslumo ignoruojame
 const ELEV_THRESHOLD = 7;       // m  – kilimas skaičiuojamas tik pasikeitus aukščiui bent tiek
 const STILL_TIMEOUT = 6000;     // ms – tiek be judėjimo = greitis 0
@@ -116,7 +147,7 @@ function createMap(id) {
         renderer: L.canvas({ tolerance: 14 })
     }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
     L.tileLayer(TILE_URL, TILE_OPTIONS).addTo(m);
-    L.control.zoom({ position: 'bottomright' }).addTo(m);
+    L.control.zoom({ position: 'topright' }).addTo(m);
     return m;
 }
 
@@ -124,7 +155,6 @@ const colorPalette = document.getElementById('colorPalette');
 const customColorInput = document.getElementById('customColor');
 const lineNameInput = document.getElementById('lineName');
 const lineSelect = document.getElementById('lineSelect');
-const deleteSelect = document.getElementById('deleteSelect');
 const gpsDrawBtn = document.getElementById('gpsDrawBtn');
 const statsPanel = document.getElementById('statsPanel');
 const historyEmpty = document.getElementById('history-empty');
@@ -140,37 +170,51 @@ const cardDate = document.getElementById('card-date');
 const closeBtn = document.getElementById('close-btn');
 
 let selectedPoly = null;
+function styleGroup(g, sel) {
+    g.eachLayer(l => { if (l._base) l.setStyle({ weight: l._base + (sel ? 3 : 0), opacity: sel ? 1 : 0.92 }); });
+}
 function clearSelection() {
-    if (selectedPoly) {
-        selectedPoly.setStyle({ weight: LINE_WEIGHT, opacity: 0.85 });
-        selectedPoly = null;
-    }
+    if (selectedPoly) { styleGroup(selectedPoly, false); selectedPoly = null; }
 }
 function closeCard() {
     infoCard.classList.add('hidden');
+    document.querySelectorAll('.act-item.selected').forEach(el => el.classList.remove('selected'));
     clearSelection();
 }
 if (closeBtn) closeBtn.onclick = closeCard;
 
+let cardLine = null;
 function showRouteCard(line, poly) {
     clearSelection();
+    cardLine = line;
     if (poly) {
         selectedPoly = poly;
-        poly.setStyle({ weight: LINE_WEIGHT_ACTIVE, opacity: 1 });
+        styleGroup(poly, true);
         poly.bringToFront();
     }
-    cardTitle.textContent = `#${line.id}: ${line.name}`;
+    const a = ACTIVITIES[line.activity] || ACTIVITIES.walk;
+    cardTitle.textContent = line.name;
     cardDot.style.background = line.color;
+    cardDot.innerHTML = iconSvg(line.activity, 18);
     cardDuration.textContent = formatTime(line.duration || 0);
     cardDistance.textContent = formatDist(line.distance || 0);
-
-    const km = (line.distance || 0) / 1000;
-    const hrs = (line.duration || 0) / 3600;
-    cardSpeed.textContent = hrs > 0 && km > 0 ? (km / hrs).toFixed(1) + ' km/h' : '0.0 km/h';
+    document.getElementById('card-speed-label').textContent = a.pace ? 'Vid. tempas' : 'Vid. greitis';
+    cardSpeed.textContent = line.duration > 0 && line.distance > 0 ? fmtSpeedFor(line.activity, line.distance / line.duration) : '--';
     cardElevation.textContent = `${Math.round(line.elevationGain || 0)} m`;
-    cardDate.textContent = line.date || '-';
-
+    cardDate.textContent = `${a.label} · ${line.date || '-'}`;
+    document.querySelectorAll('.act-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === line.id));
+    setDrawer(true);
+    const item = document.querySelector(`.act-item[data-id="${line.id}"]`);
+    if (item) item.scrollIntoView({ block: 'nearest' });
     infoCard.classList.remove('hidden');
+}
+
+// „Mano veikla“ sąrašas atsiranda tik paspaudus mygtuką arba maršrutą
+function setDrawer(open) {
+    const list = document.getElementById('history-list');
+    list.classList.toggle('open', open);
+    document.getElementById('openActBtn').classList.toggle('hidden', open);
+    document.documentElement.style.setProperty('--drawer-h', open ? list.offsetHeight + 'px' : '0px');
 }
 
 // Skilčių perjungimas
@@ -182,14 +226,15 @@ function switchTab(tabName, onReady) {
     tabContents.forEach(tab => tab.classList.remove('active'));
     document.getElementById(`tab-${tabName}`).classList.add('active');
     closeCard();
+    setDrawer(false);
 
     if (tabName === 'record') {
-        setTimeout(() => { map && map.invalidateSize(); if (onReady) onReady(); }, 50);
+        setTimeout(() => { map && map.invalidateSize(); syncPanel(); if (onReady) onReady(); }, 50);
     } else if (tabName === 'history') {
         if (!mapHistory) {
             mapHistory = createMap('map-history');
             mapHistory.setView(map.getCenter(), map.getZoom());
-            mapHistory.on('click', closeCard);
+            mapHistory.on('click', () => { closeCard(); setDrawer(false); });
         }
         setTimeout(() => {
             mapHistory.invalidateSize({ pan: false });
@@ -257,7 +302,8 @@ async function uzkrautiIsSupabase() {
             distance: item.distance || 0,
             duration: item.duration || 0,
             elevationGain: item.elevationGain || 0,
-            date: item.date || '-'
+            date: item.date || '-',
+            activity: item.activity || getTypeMap()[item.id] || 'walk'
         }));
         updateSelects();
     }
@@ -278,21 +324,22 @@ async function isaugotiISupabase(line) {
         date: line.date
     };
 
-    if (line.isNew) {
-        const { data, error } = await supabaseClient.from('zygiai')
-            .insert([{ ...payload, user_id: user.id }]).select();
-        if (error || !data || !data.length) {
-            console.error('Klaida išsaugant:', error && error.message);
-            return false;
-        }
-        line.id = data[0].id;
-        line.isNew = false;
-        return true;
-    } else {
-        const { error } = await supabaseClient.from('zygiai').update(payload).eq('id', line.id);
-        if (error) { console.error('Klaida atnaujinant:', error.message); return false; }
-        return true;
+    const send = (p) => line.isNew
+        ? supabaseClient.from('zygiai').insert([{ ...p, user_id: user.id }]).select()
+        : supabaseClient.from('zygiai').update(p).eq('id', line.id).select();
+
+    let res = await send({ ...payload, activity: line.activity });
+    if (res.error && /activity/i.test(res.error.message)) {
+        res = await send(payload);   // lentelėje dar nėra stulpelio „activity“
     }
+    if (res.error || !res.data || !res.data.length) {
+        console.error('Klaida išsaugant:', res.error && res.error.message);
+        return false;
+    }
+    line.id = res.data[0].id;
+    line.isNew = false;
+    setLocalType(line.id, line.activity);
+    return true;
 }
 
 async function istrintiIsSupabase(id) {
@@ -305,24 +352,119 @@ function createRecordingPolyline(line) {
     return L.polyline(line.points, { color: line.color, weight: LINE_WEIGHT, opacity: 0.85 }).addTo(map);
 }
 
+const OVERLAP_CELL = 8;   // m – tinklelio ląstelė persidengimams aptikti
+
 function renderHistoryPolylines() {
     if (!mapHistory) return;
     selectedPoly = null;
-    historyPolylineMap.forEach(poly => mapHistory.removeLayer(poly));
+    if (historyHalo) { mapHistory.removeLayer(historyHalo); historyHalo = null; }
+    historyPolylineMap.forEach(g => mapHistory.removeLayer(g));
     historyPolylineMap.clear();
 
-    let count = 0;
-    linesData.forEach(line => {
-        if (!line.points || line.points.length === 0) return;
-        const poly = L.polyline(line.points, { color: line.color, weight: LINE_WEIGHT, opacity: 0.85 }).addTo(mapHistory);
-        poly.on('click', (e) => {
-            L.DomEvent.stopPropagation(e);
-            showRouteCard(line, poly);
-        });
-        historyPolylineMap.set(line.id, poly);
-        count++;
+    const lines = linesData.filter(l => l.points && l.points.length > 1);
+    historyEmpty.classList.toggle('hidden', lines.length > 0);
+    if (!lines.length) { renderHistoryList(); return; }
+
+    // 1) Kiek skirtingų maršrutų eina per kiekvieną vietą (spalvos nesvarbios)
+    const dLat = OVERLAP_CELL / 111320;
+    const dLng = OVERLAP_CELL / (111320 * Math.cos(lines[0].points[0][0] * Math.PI / 180));
+    const cells = new Map();
+    lines.forEach(l => {
+        for (let i = 0; i < l.points.length - 1; i++) {
+            const a = l.points[i], b = l.points[i + 1];
+            const steps = Math.max(1, Math.ceil(L.latLng(a).distanceTo(L.latLng(b)) / 4));
+            for (let k = 0; k <= steps; k++) {
+                const la = a[0] + (b[0] - a[0]) * k / steps, ln = a[1] + (b[1] - a[1]) * k / steps;
+                const key = Math.floor(la / dLat) + ',' + Math.floor(ln / dLng);
+                if (!cells.has(key)) cells.set(key, new Set());
+                cells.get(key).add(l.id);
+            }
+        }
     });
-    historyEmpty.classList.toggle('hidden', count > 0);
+    const countAt = (la, ln) => {
+        const cx = Math.floor(la / dLat), cy = Math.floor(ln / dLng), u = new Set();
+        for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) {
+            const s = cells.get((cx + x) + ',' + (cy + y));
+            if (s) s.forEach(id => u.add(id));
+        }
+        return u.size;
+    };
+
+    // 2) Kiekvienas maršrutas dalijamas į ruožus, storis pagal kartų skaičių
+    const halos = [], built = [];
+    lines.forEach(l => {
+        const p = l.points, m = p.length - 1;
+        const raw = [];
+        for (let i = 0; i < m; i++) raw.push(countAt((p[i][0] + p[i + 1][0]) / 2, (p[i][1] + p[i + 1][1]) / 2));
+        const cnt = raw.map((_, i) => Math.max(raw[i - 1] || 1, raw[i], raw[i + 1] || 1));
+        const layers = [];
+        let start = 0;
+        for (let i = 0; i < m; i++) {
+            if (i === m - 1 || cnt[i + 1] !== cnt[i]) {
+                const seg = p.slice(start, i + 2);
+                const w = 4 + Math.min(cnt[i] - 1, 4) * 1.5;
+                const pl = L.polyline(seg, { color: l.color, weight: w, opacity: 0.92, lineCap: 'round', lineJoin: 'round' });
+                pl._base = w;
+                layers.push(pl);
+                if (cnt[i] > 1) halos.push(L.polyline(seg, { color: '#fff', weight: w + 3, opacity: 0.75, interactive: false }));
+                start = i + 1;
+            }
+        }
+        built.push({ l, layers });
+    });
+
+    historyHalo = L.featureGroup(halos).addTo(mapHistory);
+    built.forEach(({ l, layers }) => {
+        const g = L.featureGroup(layers).addTo(mapHistory);
+        g.on('click', (e) => { L.DomEvent.stopPropagation(e); showRouteCard(l, g); });
+        historyPolylineMap.set(l.id, g);
+    });
+    renderHistoryList();
+}
+
+function thumbSvg(pts, color) {
+    if (!pts || pts.length < 2) return '';
+    const step = Math.ceil(pts.length / 120);
+    const p = pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
+    const lats = p.map(x => x[0]), lngs = p.map(x => x[1]);
+    const minLa = Math.min(...lats), maxLa = Math.max(...lats), minLn = Math.min(...lngs), maxLn = Math.max(...lngs);
+    const kx = Math.cos(((minLa + maxLa) / 2) * Math.PI / 180);
+    const w = Math.max((maxLn - minLn) * kx, 1e-9), hgt = Math.max(maxLa - minLa, 1e-9);
+    const sc = Math.min(60 / w, 44 / hgt);
+    const ox = (76 - w * sc) / 2, oy = (60 - hgt * sc) / 2;
+    const d = p.map(x => `${(ox + (x[1] - minLn) * kx * sc).toFixed(1)},${(oy + (maxLa - x[0]) * sc).toFixed(1)}`).join(' ');
+    return `<svg class="act-thumb" viewBox="0 0 76 60"><polyline points="${d}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function renderHistoryList() {
+    const box = document.getElementById('history-items');
+    if (!box) return;
+    box.innerHTML = '';
+    [...linesData].reverse().forEach(line => {
+        if (!line.points || line.points.length < 2) return;
+        const a = ACTIVITIES[line.activity] || ACTIVITIES.walk;
+        const el = document.createElement('button');
+        el.className = 'act-item';
+        el.dataset.id = line.id;
+        const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        el.innerHTML = `${thumbSvg(line.points, line.color)}
+            <div class="act-info">
+                <div class="act-title">${iconSvg(line.activity, 16)}<span>${esc(line.name)}</span></div>
+                <div class="act-date">${esc(line.date || '-')} · ${a.label}</div>
+                <div class="act-stats">
+                    <div><small>Atstumas</small><b>${formatDist(line.distance || 0)}</b></div>
+                    <div><small>Trukmė</small><b>${formatTime(line.duration || 0)}</b></div>
+                    <div><small>Sukilimas</small><b>${Math.round(line.elevationGain || 0)} m</b></div>
+                </div>
+            </div>`;
+        el.onclick = () => {
+            const poly = historyPolylineMap.get(line.id);
+            if (!poly) return;
+            mapHistory.fitBounds(poly.getBounds(), { padding: [40, 40], maxZoom: 17 });
+            showRouteCard(line, poly);
+        };
+        box.appendChild(el);
+    });
 }
 
 const fitAllBtn = document.getElementById('fitAllBtn');
@@ -335,28 +477,49 @@ if (fitAllBtn) {
     };
 }
 
-const toggleMenuBtn = document.getElementById('toggleMenuBtn');
-if (toggleMenuBtn) {
-    toggleMenuBtn.onclick = () => document.getElementById('drawMenu').classList.toggle('hidden');
+document.getElementById('openActBtn').onclick = () => setDrawer(true);
+document.getElementById('closeActBtn').onclick = () => { setDrawer(false); closeCard(); };
+
+const toggleMoreBtn = document.getElementById('toggleMoreBtn');
+toggleMoreBtn.onclick = () => { document.getElementById('moreOpts').classList.toggle('hidden'); syncPanel(); };
+
+// Veiklos tipo pasirinkimas
+const activityRow = document.getElementById('activityRow');
+Object.keys(ACTIVITIES).forEach(key => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'act-chip' + (key === selectedActivity ? ' active' : '');
+    b.innerHTML = `${iconSvg(key, 22)}<span>${ACTIVITIES[key].label}</span>`;
+    b.onclick = () => {
+        selectedActivity = key;
+        activityRow.querySelectorAll('.act-chip').forEach(c => c.classList.remove('active'));
+        b.classList.add('active');
+    };
+    activityRow.appendChild(b);
+});
+
+// Skydelio aukštis -> žemėlapio atribucija nepaslepiama
+const recordPanel = document.getElementById('recordPanel');
+function syncPanel() {
+    document.documentElement.style.setProperty('--panel-h', recordPanel.offsetHeight + 'px');
 }
+if (window.ResizeObserver) new ResizeObserver(syncPanel).observe(recordPanel);
+syncPanel();
 
 document.querySelectorAll('input[name="lineOption"]').forEach(r => {
-    r.onchange = (e) => lineSelect.classList.toggle('hidden', e.target.value !== 'continue');
+    r.onchange = (e) => { lineSelect.classList.toggle('hidden', e.target.value !== 'continue'); syncPanel(); };
 });
 
 function updateSelects() {
-    if (!lineSelect || !deleteSelect) return;
+    if (!lineSelect) return;
     lineSelect.innerHTML = '';
-    deleteSelect.innerHTML = '<option value="">-- Pasirinkite --</option>';
-    linesData.forEach(l => {
-        lineSelect.add(new Option(`#${l.id}: ${l.name}`, l.id));
-        deleteSelect.add(new Option(`#${l.id}: ${l.name}`, l.id));
-    });
+    linesData.forEach(l => lineSelect.add(new Option(l.name, l.id)));
 }
 
 // GPS Įrašymo logika
 if (gpsDrawBtn) {
-    gpsDrawBtn.onclick = () => isGpsRecording ? stopGps(true) : startGps();
+    gpsDrawBtn.onclick = () => startGps();
+    document.getElementById('stopBtn').onclick = () => stopGps(true);
 }
 
 async function acquireWakeLock() {
@@ -378,6 +541,12 @@ const median = (arr) => {
     return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
+function defaultName(type) {
+    const h = new Date().getHours();
+    const part = h < 5 ? 'Naktinis' : h < 12 ? 'Rytinis' : h < 18 ? 'Popietinis' : 'Vakarinis';
+    return `${part} ${ACTIVITIES[type].noun}`;
+}
+
 function startGps() {
     if (!('geolocation' in navigator)) return alert('GPS nepalaikomas');
 
@@ -389,17 +558,23 @@ function startGps() {
         currentLineData = linesData.find(l => l.id === id);
         if (!currentLineData) return alert('Pasirinkite maršrutą');
         currentLineData.color = selectedColor;
+        selectedActivity = currentLineData.activity || selectedActivity;
         currentLineData.elevationGain = currentLineData.elevationGain || 0;
         totalElapsed = currentLineData.duration || 0;
     } else {
         currentLineData = {
             id: null, isNew: true,
-            name: lineNameInput.value.trim() || `Žygis ${linesData.length + 1}`,
+            activity: selectedActivity,
+            name: lineNameInput.value.trim() || defaultName(selectedActivity),
             color: selectedColor, date: new Date().toLocaleDateString('lt-LT'),
             distance: 0, duration: 0, elevationGain: 0, points: []
         };
         totalElapsed = 0;
     }
+    const act = ACTIVITIES[currentLineData.activity] || ACTIVITIES.walk;
+    MAX_SPEED = act.maxSpeed; MIN_STEP = act.minStep;
+    document.getElementById('lblSpeed').textContent = act.pace ? 'Tempas' : 'Greitis';
+    document.getElementById('liveActivity').textContent = `${act.label} · įrašoma`;
     currentPolyline = createRecordingPolyline(currentLineData);
 
     // Išvalome filtrų būseną
@@ -415,10 +590,9 @@ function startGps() {
     acquireWakeLock();
 
     isGpsRecording = true;
-    gpsDrawBtn.textContent = 'Stabdyti GPS įrašymą';
-    gpsDrawBtn.classList.add('active');
+    document.getElementById('setupView').classList.add('hidden');
     statsPanel.classList.remove('hidden');
-    document.getElementById('drawMenu').classList.add('hidden');
+    syncPanel();
     updateStats();
 }
 
@@ -520,16 +694,11 @@ function updateStats() {
 
     // Nejudant greitis krenta į 0
     if (Date.now() - lastMoveTime > STILL_TIMEOUT) curSpeed = 0;
-    const shownSpeed = curSpeed * 3.6 < 1 ? 0 : curSpeed * 3.6;
 
     document.getElementById('statTime').textContent = formatTime(totalElapsed);
     document.getElementById('statDistance').textContent = formatDist(currentLineData.distance);
-    document.getElementById('statSpeed').textContent = `${shownSpeed.toFixed(1)} km/h`;
+    document.getElementById('statSpeed').textContent = fmtSpeedFor(currentLineData.activity, curSpeed);
     document.getElementById('statElevation').textContent = `${Math.round(currentLineData.elevationGain || 0)} m`;
-
-    const km = currentLineData.distance / 1000;
-    const hrs = totalElapsed / 3600;
-    document.getElementById('statAvgSpeed').textContent = `${(hrs > 0 && km > 0 ? km / hrs : 0).toFixed(1)} km/h`;
 }
 
 async function stopGps(save = true) {
@@ -539,12 +708,13 @@ async function stopGps(save = true) {
     clearInterval(timerInterval);
     releaseWakeLock();
 
-    gpsDrawBtn.textContent = 'Pradėti GPS įrašymą';
-    gpsDrawBtn.classList.remove('active');
+    document.getElementById('setupView').classList.remove('hidden');
+    lineNameInput.value = '';
 
     if (userMarker) { map.removeLayer(userMarker); userMarker = null; }
     if (accuracyCircle) { map.removeLayer(accuracyCircle); accuracyCircle = null; }
     statsPanel.classList.add('hidden');
+    syncPanel();
 
     // Maršrutas išimamas iš „Įrašymo“ žemėlapio – jis priklauso skilčiai „Buvę“
     if (currentPolyline) { map.removeLayer(currentPolyline); currentPolyline = null; }
@@ -579,25 +749,15 @@ async function stopGps(save = true) {
     });
 }
 
-const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
-if (deleteSelectedBtn) {
-    deleteSelectedBtn.onclick = async () => {
-        const id = parseInt(deleteSelect.value);
-        if (!id) return;
-
-        // Jei ištrinamas dabar įrašomas maršrutas – įrašymas nutraukiamas be išsaugojimo
-        if (isGpsRecording && currentLineData && currentLineData.id === id) {
-            await stopGps(false);
-        }
-
-        if (mapHistory && historyPolylineMap.has(id)) {
-            mapHistory.removeLayer(historyPolylineMap.get(id));
-            historyPolylineMap.delete(id);
-        }
-
-        linesData = linesData.filter(l => l.id !== id);
-        await istrintiIsSupabase(id);
-        updateSelects();
-        closeCard();
-    };
+async function deleteLine(id) {
+    if (isGpsRecording && currentLineData && currentLineData.id === id) await stopGps(false);
+    linesData = linesData.filter(l => l.id !== id);
+    await istrintiIsSupabase(id);
+    updateSelects();
+    closeCard();
+    if (mapHistory) renderHistoryPolylines();
 }
+
+document.getElementById('card-delete').onclick = () => {
+    if (cardLine && confirm(`Ištrinti „${cardLine.name}“?`)) deleteLine(cardLine.id);
+};

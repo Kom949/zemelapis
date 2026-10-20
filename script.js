@@ -43,6 +43,11 @@ function fmtSpeedFor(type, ms) {   // ms = m/s
 const getTypeMap = () => { try { return JSON.parse(localStorage.getItem('zygiaiTipai') || '{}'); } catch (e) { return {}; } };
 const setLocalType = (id, t) => { try { const m = getTypeMap(); m[id] = t; localStorage.setItem('zygiaiTipai', JSON.stringify(m)); } catch (e) {} };
 
+const hm = (d) => d.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit' });
+// Pradžios/pabaigos laikas saugomas esamame „date“ lauke: „2026-10-20|07:42|09:15“ (DB keisti nereikia)
+const encodeDate = (l) => l.startedAt ? `${l.date}|${l.startedAt}|${l.endedAt || ''}` : l.date;
+const whenText = (l) => l.startedAt ? `${l.date}, ${l.startedAt}${l.endedAt ? '–' + l.endedAt : ''}` : (l.date || '-');
+
 let map = null;
 let mapHistory = null;
 const historyPolylineMap = new Map();
@@ -201,7 +206,7 @@ function showRouteCard(line, poly) {
     document.getElementById('card-speed-label').textContent = a.pace ? 'Vid. tempas' : 'Vid. greitis';
     cardSpeed.textContent = line.duration > 0 && line.distance > 0 ? fmtSpeedFor(line.activity, line.distance / line.duration) : '--';
     cardElevation.textContent = `${Math.round(line.elevationGain || 0)} m`;
-    cardDate.textContent = `${a.label} · ${line.date || '-'}`;
+    cardDate.textContent = `${a.label} · ${whenText(line)}`;
     document.querySelectorAll('.act-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === line.id));
     setDrawer(true);
     const item = document.querySelector(`.act-item[data-id="${line.id}"]`);
@@ -302,7 +307,9 @@ async function uzkrautiIsSupabase() {
             distance: item.distance || 0,
             duration: item.duration || 0,
             elevationGain: item.elevationGain || 0,
-            date: item.date || '-',
+            date: (item.date || '-').split('|')[0],
+            startedAt: (item.date || '').split('|')[1] || '',
+            endedAt: (item.date || '').split('|')[2] || '',
             activity: item.activity || getTypeMap()[item.id] || 'walk'
         }));
         updateSelects();
@@ -321,7 +328,7 @@ async function isaugotiISupabase(line) {
         distance: Math.round(line.distance),
         duration: Math.round(line.duration),
         elevationGain: Math.round(line.elevationGain || 0),
-        date: line.date
+        date: encodeDate(line)
     };
 
     const send = (p) => line.isNew
@@ -450,7 +457,7 @@ function renderHistoryList() {
         el.innerHTML = `${thumbSvg(line.points, line.color)}
             <div class="act-info">
                 <div class="act-title">${iconSvg(line.activity, 16)}<span>${esc(line.name)}</span></div>
-                <div class="act-date">${esc(line.date || '-')} · ${a.label}</div>
+                <div class="act-date">${esc(whenText(line))} · ${a.label}</div>
                 <div class="act-stats">
                     <div><small>Atstumas</small><b>${formatDist(line.distance || 0)}</b></div>
                     <div><small>Trukmė</small><b>${formatTime(line.duration || 0)}</b></div>
@@ -566,7 +573,7 @@ function startGps() {
             id: null, isNew: true,
             activity: selectedActivity,
             name: lineNameInput.value.trim() || defaultName(selectedActivity),
-            color: selectedColor, date: new Date().toLocaleDateString('lt-LT'),
+            color: selectedColor, date: new Date().toLocaleDateString('lt-LT'), startedAt: hm(new Date()), endedAt: '',
             distance: 0, duration: 0, elevationGain: 0, points: []
         };
         totalElapsed = 0;
@@ -733,6 +740,7 @@ async function stopGps(save = true) {
     }
 
     line.duration = Math.round(totalElapsed);
+    if (line.startedAt) line.endedAt = hm(new Date());
     const wasNew = line.isNew;
     const ok = await isaugotiISupabase(line);
     if (!ok) alert('Nepavyko išsaugoti žygio į serverį. Patikrinkite ryšį.');

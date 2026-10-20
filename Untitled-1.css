@@ -1,6 +1,6 @@
 :root {
-    --accent: #1f6feb;
-    --primary: #1f6feb;
+    --accent: #384a31;
+    --primary: #384a31;
     --primary-soft: #eaf2ff;
     --ink: #242428;
     --muted: #6d6d78;
@@ -16,7 +16,7 @@
 
 body, html {
     margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Barlow', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg); color: var(--ink);
 }
 button { font-family: inherit; }
@@ -166,8 +166,8 @@ input:focus, select:focus { border-color: var(--accent); }
     z-index: 2500; padding: 14px 16px 12px;
     transition: transform .25s ease;
 }
-#info-card { transition: transform .25s ease, bottom .25s ease; }
-#info-card.hidden { display: block !important; transform: translateY(120%); pointer-events: none; }
+#info-card { transition: transform .25s ease, opacity .2s ease, bottom .25s ease, visibility 0s; }
+#info-card.hidden { display: block !important; transform: translateY(24px); opacity: 0; visibility: hidden; pointer-events: none; transition: transform .25s ease, opacity .2s ease, visibility 0s .25s; }
 .card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .card-dot { width: 36px; height: 36px; border-radius: 50%; flex: none; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; }
 .card-titles { flex: 1; min-width: 0; }
@@ -180,3 +180,47 @@ input:focus, select:focus { border-color: var(--accent); }
 .tile:nth-child(even) { padding-left: 16px; }
 .tile strong { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .delete-link { display: block; margin: 10px auto 0; background: none; border: none; color: var(--danger); font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px 12px; }
+
+
+/* ---------- Švelnesnis, bet „gyvas“ stilius ---------- */
+:root { --ink: #1f2124; --muted: #6a6b70; --line: #dddbd3; --bg: #f3f2ed; --primary-soft: #e8f0fd; }
+.field-label, .tile span, .live-stat span, .act-stats small, .list-head, .live-top, .act-chip, .logout-chip, .nav-item {
+    font-family: 'Barlow Condensed', 'Barlow', sans-serif; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+}
+.field-label, .tile span, .live-stat span, .act-stats small, .nav-item, .act-chip { font-size: 12px; }
+.live-stat b, .tile strong, .act-stats b, .card-titles h3 { font-family: 'Barlow Condensed', 'Barlow', sans-serif; font-weight: 700; }
+.live-stat b { font-size: 26px; } .live-stat.wide b { font-size: 48px; }
+.tile strong { font-size: 26px; } .act-stats b { font-size: 17px; }
+.act-title { font-size: 16px; }
+
+.auth-card { border-radius: 14px; }
+.top-user-bar, input[type="text"], input[type="email"], input[type="password"], select, .fab-chip, #close-btn, #closeActBtn,
+.leaflet-control-zoom, #moreOpts { border-radius: 8px !important; }
+.act-chip, .segmented, .gps-btn, #openActBtn { border-radius: 10px !important; }
+.segmented span { border-radius: 8px !important; }
+.logout-chip, .act-thumb { border-radius: 6px !important; }
+.color-swatch, #customColor { border-radius: 50% !important; }
+.card-dot { border-radius: 50%; }
+
+#recordPanel, #info-card, #history-list {
+    border: 1px solid var(--line); border-bottom: none; border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 18px rgba(31, 33, 36, .10);
+}
+.bottom-nav { border-top: 1px solid var(--line); }
+.nav-item { border-top: 2px solid transparent; margin-top: -1px; }
+.nav-item.active { color: var(--accent); border-top-color: var(--accent); }
+
+.act-chip { border: 1px solid var(--line); }
+.act-chip.active { background: var(--primary-soft); border-color: var(--accent); color: var(--accent); }
+.segmented { background: #e7e5dd; }
+.segmented input:checked + span { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+input[type="text"], input[type="email"], input[type="password"], select { border: 1px solid var(--line); background: #fff; }
+
+.gps-btn, #openActBtn { font-family: 'Barlow Condensed', 'Barlow', sans-serif; text-transform: uppercase; letter-spacing: 0.05em; font-size: 17px; font-weight: 700; padding: 13px; }
+#openActBtn { padding: 10px 16px; font-size: 15px; box-shadow: 0 2px 8px rgba(31, 33, 36, .22); }
+.top-user-bar { background: #fff; border: 1px solid var(--line); }
+.logout-chip { background: var(--bg); border: 1px solid var(--line); }
+.act-item { background: #fff; }
+.act-item.selected { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.act-thumb { background: #eceae2; }
+.delete-link { font-family: 'Barlow Condensed', 'Barlow', sans-serif; text-transform: uppercase; letter-spacing: 0.05em; font-size: 14px; }

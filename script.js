@@ -103,6 +103,17 @@ let linesData = [];
 let watchId = null, timerInterval = null, startTime = null, totalElapsed = 0;
 let userMarker = null, accuracyCircle = null, isGpsRecording = false;
 let currentLineData = null, currentPolyline = null;
+let lastBearing = 0;   // paskutinio judėjimo krypties laipsniai (0 = šiaurė)
+
+// Bearing (laipsniai) tarp dviejų LatLng taškų – 0 = šiaurė, 90 = rytai, 180 = pietūs, 270 = vakarai
+function bearingBetween(a, b) {
+    const φ1 = a.lat * Math.PI / 180;
+    const φ2 = b.lat * Math.PI / 180;
+    const Δλ = (b.lng - a.lng) * Math.PI / 180;
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
 
 // ---- GPS filtravimo parametrai ----
 const MAX_ACCURACY = 25;        // m  – fiksavimai, blogesni už šį, ignoruojami
@@ -1030,13 +1041,33 @@ function onGps(pos) {
 
     // Vartotojo žymeklis rodomas visada, kad matytųsi GPS būklė
     if (!userMarker) {
-        userMarker = L.circleMarker(pt, { radius: 8, fillColor: '#2563eb', color: '#fff', weight: 3, fillOpacity: 1 }).addTo(map);
-        accuracyCircle = L.circle(pt, { radius: accuracy, color: '#2563eb', fillOpacity: 0.1, weight: 1 }).addTo(map);
+        // Pasukama rodyklė (trikampis) + apvalus kamuoliukas centre
+        userMarker = L.marker(pt, {
+            icon: L.divIcon({
+                className: 'user-marker',
+                html: '<div class="user-arrow"></div><div class="user-ball"></div>',
+                iconSize: [40, 40],
+                iconAnchor: [20, 20]
+            }),
+            interactive: false,
+            zIndexOffset: 1000
+        }).addTo(map);
+        accuracyCircle = L.circle(pt, { radius: accuracy, color: '#2563eb', fillOpacity: 0.1, weight: 1, interactive: false }).addTo(map);
     } else {
         userMarker.setLatLng(pt);
         accuracyCircle.setLatLng(pt).setRadius(accuracy);
     }
-    map.setView(pt, map.getZoom());
+    // Pasukame rodyklę pagal paskutinę žinomą judėjimo kryptį
+    const arrowEl = userMarker.getElement && userMarker.getElement() ? userMarker.getElement().querySelector('.user-arrow') : null;
+    if (arrowEl) arrowEl.style.transform = `rotate(${lastBearing}deg)`;
+
+    // Žemėlapis seka vartotoją, bet perkelia vaizdą į viršų, kad kamuoliukas
+    // būtų matomas virš įrašymo panelės (neuždengtas jos).
+    const panelH = recordPanel ? recordPanel.offsetHeight : 200;
+    const offset = Math.max(80, Math.round(panelH / 2));
+    const proj = map.project(L.latLng(pt), map.getZoom());
+    const offsetCenter = map.unproject(L.point(proj.x, proj.y - offset), map.getZoom());
+    map.setView(offsetCenter, map.getZoom(), { animate: true, duration: 0.5 });
 
     // 1) Per prastas tikslumas – neįtraukiame į matavimus
     if (!(accuracy <= MAX_ACCURACY)) return;
@@ -1110,6 +1141,17 @@ function onGps(pos) {
     } else if (typeof altitude === 'number' && isFinite(altitude) &&
                (altitudeAccuracy == null || altitudeAccuracy <= MAX_ALT_ACCURACY)) {
         processAltitude(altitude);
+    }
+
+    // Atnaujiname judėjimo kryptį (bearing) ir pasukame rodyklę, jei tikrai pajudėta
+    if (lastFix) {
+        const prev = L.latLng(lastFix.pt);
+        const curr = L.latLng(pt);
+        if (prev.distanceTo(curr) > 3) {
+            lastBearing = bearingBetween(prev, curr);
+            const arrEl = userMarker.getElement && userMarker.getElement() ? userMarker.getElement().querySelector('.user-arrow') : null;
+            if (arrEl) arrEl.style.transform = `rotate(${lastBearing}deg)`;
+        }
     }
 
     lastFix = { pt, t };

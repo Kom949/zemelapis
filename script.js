@@ -447,8 +447,9 @@ async function uzkrautiIsSupabase() {
 
 // Naujas žygis -> INSERT, tęsiamas -> UPDATE (anksčiau tęsiant būdavo sukuriamas dublikatas)
 async function isaugotiISupabase(line) {
-    const { data: { user } } = await supabaseClient.auth.getUser();
-    if (!user) return false;
+    const { data: { user }, error: userErr } = await supabaseClient.auth.getUser();
+    if (userErr) return { ok: false, error: 'Auth klaida: ' + (userErr.message || userErr) };
+    if (!user) return { ok: false, error: 'Naudotojas neprisijungęs' };
 
     const payload = {
         title: line.name,
@@ -481,9 +482,14 @@ async function isaugotiISupabase(line) {
             res = await send(payload);
         }
     }
-    if (res.error || !res.data || !res.data.length) {
-        console.error('Klaida išsaugant:', res.error && res.error.message);
-        return false;
+    if (res.error) {
+        // Klaida jau su pilna Supabase žinute (pvz., RLS pažeidimas, stulpelio nėra)
+        console.error('Klaida išsaugant:', res.error.message);
+        return { ok: false, error: res.error.message };
+    }
+    if (!res.data || !res.data.length) {
+        console.error('Klaida išsaugant: serveris negrąžino įrašo');
+        return { ok: false, error: 'Serveris negrąžino įrašo (galimai RLS politikos trūkumas)' };
     }
     line.id = res.data[0].id;
     line.isNew = false;
@@ -492,7 +498,7 @@ async function isaugotiISupabase(line) {
     setLocalExtra(line.id, 'maxSpeed', extra.max_speed);
     setLocalExtra(line.id, 'movingTime', extra.moving_time);
     setLocalExtra(line.id, 'calories', extra.calories);
-    return true;
+    return { ok: true, error: null };
 }
 
 async function istrintiIsSupabase(id) {
@@ -892,7 +898,10 @@ async function checkDraft() {
     clearDraft();
     if (l.points && l.points.length > 1 && l.distance >= 10) {
         if (l.startedAt) l.endedAt = hm(new Date(d.savedAt));
-        await isaugotiISupabase(l);
+        const resDraft = await isaugotiISupabase(l);
+        if (!resDraft.ok) {
+            alert('Nebaigtas įrašas neišsaugotas.\n\nKlaida: ' + (resDraft.error || 'nežinoma'));
+        }
         const idx = l.id != null ? linesData.findIndex(x => x.id === l.id) : -1;
         if (idx >= 0) linesData[idx] = l; else linesData.push(l);
         updateSelects();
@@ -1186,8 +1195,12 @@ async function stopGps(save = true) {
     line.calories = totalCalories;
     if (line.startedAt) line.endedAt = hm(new Date());
     const wasNew = line.isNew;
-    const ok = await isaugotiISupabase(line);
-    if (!ok) alert('Nepavyko išsaugoti žygio į serverį. Patikrinkite ryšį.');
+    const resSave = await isaugotiISupabase(line);
+    if (!resSave.ok) {
+        // Rodome pilną klaidos pranešimą telefone – kad būtų aišku, kodėl nepavyko
+        alert('Nepavyko išsaugoti žygio į serverį.\n\nKlaida: ' + (resSave.error || 'nežinoma') +
+              '\n\nPatikrinkite Supabase Dashboard → SQL Editor, ar lentelė „zygiai" turi RLS politikas (žr. DUOMENU_BAZE.md).');
+    }
     if (wasNew && !linesData.includes(line)) linesData.push(line);
     updateSelects();
 
@@ -1219,7 +1232,10 @@ if (cardRenameBtn) cardRenameBtn.onclick = async () => {
     if (!n || !n.trim()) return;
     cardLine.name = n.trim().slice(0, 60);
     cardTitle.textContent = cardLine.name;
-    await isaugotiISupabase(cardLine);
+    const resRename = await isaugotiISupabase(cardLine);
+    if (!resRename.ok) {
+        alert('Nepavyko pervadinti.\n\nKlaida: ' + (resRename.error || 'nežinoma'));
+    }
     renderHistoryList();
     document.querySelectorAll('.act-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === cardLine.id));
 };

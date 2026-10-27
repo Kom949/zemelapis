@@ -69,9 +69,13 @@ const MAX_ALT_ACCURACY = 15;    // m  – blogesnio aukščio tikslumo ignoruoja
 const ELEV_THRESHOLD = 7;       // m  – kilimas skaičiuojamas tik pasikeitus aukščiui bent tiek
 const STILL_TIMEOUT = 6000;     // ms – tiek be judėjimo = greitis 0
 
+let lastAny = null;             // { t, speed } paskutinis tikslus fiksavimas (Doplerio greičiui)
 let lastFix = null;             // { pt, t } paskutinis priimtas taškas
 let rejectedInRow = 0;
 let curSpeed = 0, lastMoveTime = 0;
+let activeMs = 0, lastTick = 0, isPaused = false, autoPaused = false, autoPauseOn = true;
+const AUTO_PAUSE_DELAY = 8000;  // ms be judėjimo -> automatinė pauzė
+const activeNow = () => activeMs + ((isPaused || autoPaused || !lastTick) ? 0 : Date.now() - lastTick);
 let altWindow = [], smoothAlt = null, anchorAlt = null;
 let wakeLock = null;
 
@@ -189,6 +193,53 @@ function closeCard() {
 if (closeBtn) closeBtn.onclick = closeCard;
 
 let cardLine = null;
+
+// Kilometrų tarpiniai laikai (reikia taškų laiko žymų – turi tik nauji įrašai)
+function computeSplits(line) {
+    const p = line.points;
+    if (!p || p.length < 2 || p.some(q => q.length < 3)) return [];
+    const cum = [0];
+    for (let i = 1; i < p.length; i++) cum.push(cum[i - 1] + L.latLng(p[i - 1]).distanceTo(L.latLng(p[i])));
+    const f = line.distance > 0 && cum[cum.length - 1] > 0 ? line.distance / cum[cum.length - 1] : 1;
+    const D = cum.map(x => x * f), total = D[D.length - 1];
+    const out = []; let prevT = p[0][2], k = 1, j = 1;
+    while (k * 1000 <= total) {
+        while (j < D.length - 1 && D[j] < k * 1000) j++;
+        const r = (k * 1000 - D[j - 1]) / ((D[j] - D[j - 1]) || 1);
+        const t = p[j - 1][2] + (p[j][2] - p[j - 1][2]) * r;
+        out.push({ km: k, sec: t - prevT, dist: 1000 });
+        prevT = t; k++;
+    }
+    const rem = total - (k - 1) * 1000;
+    if (rem >= 100) out.push({ km: k, sec: p[p.length - 1][2] - prevT, dist: rem, partial: true });
+    return out.filter(x => x.sec > 0);
+}
+
+function renderSplits(line) {
+    const box = document.getElementById('card-splits');
+    const sp = computeSplits(line);
+    if (!sp.length) { box.innerHTML = ''; return; }
+    const a = ACTIVITIES[line.activity] || ACTIVITIES.walk;
+    const paces = sp.map(x => x.sec / (x.dist / 1000)), best = Math.min(...paces);
+    box.innerHTML = `<div class="split-head"><span>Km</span><span>${a.pace ? 'Tempas' : 'Greitis'}</span></div>` +
+        sp.map((x, i) => `<div class="split"><span class="sk">${x.partial ? (x.dist / 1000).toFixed(2) : x.km}</span>
+            <span class="sbar"><i style="width:${(30 + 70 * best / paces[i]).toFixed(0)}%"></i></span>
+            <b>${fmtSpeedFor(line.activity, x.dist / x.sec)}</b></div>`).join('');
+}
+
+function exportGpx(line) {
+    const p = line.points || [];
+    const hasT = p.length && p.every(q => q.length >= 3);
+    const base = line.startedAt && /^\d{4}-\d{2}-\d{2}$/.test(line.date) ? new Date(`${line.date}T${line.startedAt}:00`) : null;
+    const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const pts = p.map(q => `<trkpt lat="${q[0]}" lon="${q[1]}">${base && hasT ? `<time>${new Date(base.getTime() + (q[2] - p[0][2]) * 1000).toISOString()}</time>` : ''}</trkpt>`).join('');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="GPS Žygio Žemėlapis" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>${esc(line.name)}</name><type>${line.activity}</type><trkseg>${pts}</trkseg></trk></gpx>`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([xml], { type: 'application/gpx+xml' }));
+    a.download = `${line.name.replace(/[^\w\-ąčęėįšųūžĄČĘĖĮŠŲŪŽ ]+/g, '').trim() || 'marsrutas'}.gpx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
 function showRouteCard(line, poly) {
     clearSelection();
     cardLine = line;
@@ -206,6 +257,7 @@ function showRouteCard(line, poly) {
     document.getElementById('card-speed-label').textContent = a.pace ? 'Vid. tempas' : 'Vid. greitis';
     cardSpeed.textContent = line.duration > 0 && line.distance > 0 ? fmtSpeedFor(line.activity, line.distance / line.duration) : '--';
     cardElevation.textContent = `${Math.round(line.elevationGain || 0)} m`;
+    renderSplits(line);
     cardDate.textContent = `${a.label} · ${whenText(line)}`;
     document.querySelectorAll('.act-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === line.id));
     const item = document.querySelector(`.act-item[data-id="${line.id}"]`);
@@ -446,6 +498,19 @@ function thumbSvg(pts, color) {
 function renderHistoryList() {
     const box = document.getElementById('history-items');
     if (!box) return;
+    const sum = document.getElementById('history-summary');
+    if (sum) {
+        const monday = new Date(); monday.setHours(0, 0, 0, 0);
+        monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+        const wk = { n: 0, d: 0, t: 0 }, all = { n: 0, d: 0, t: 0 };
+        linesData.forEach(l => {
+            all.n++; all.d += l.distance || 0; all.t += l.duration || 0;
+            const dt = new Date((l.date || '') + 'T00:00:00');
+            if (!isNaN(dt) && dt >= monday) { wk.n++; wk.d += l.distance || 0; wk.t += l.duration || 0; }
+        });
+        const cell = (title, o) => `<div><small>${title}</small><b>${formatDist(o.d)}</b><span>${formatTime(o.t)} · ${o.n} veikl.</span></div>`;
+        sum.innerHTML = cell('Ši savaitė', wk) + cell('Iš viso', all);
+    }
     box.innerHTML = '';
     [...linesData].reverse().forEach(line => {
         if (!line.points || line.points.length < 2) return;
@@ -487,6 +552,10 @@ if (fitAllBtn) {
 document.getElementById('openActBtn').onclick = () => setDrawer(true);
 document.getElementById('closeActBtn').onclick = () => { setDrawer(false); closeCard(); };
 
+const autoChk = document.getElementById('autoPauseChk');
+try { autoChk.checked = localStorage.getItem('autoPause') !== '0'; } catch (e) {}
+autoChk.onchange = () => { autoPauseOn = autoChk.checked; try { localStorage.setItem('autoPause', autoChk.checked ? '1' : '0'); } catch (e) {} };
+
 const toggleMoreBtn = document.getElementById('toggleMoreBtn');
 toggleMoreBtn.onclick = () => { document.getElementById('moreOpts').classList.toggle('hidden'); syncPanel(); };
 
@@ -527,6 +596,17 @@ function updateSelects() {
 if (gpsDrawBtn) {
     gpsDrawBtn.onclick = () => startGps();
     document.getElementById('stopBtn').onclick = () => stopGps(true);
+    document.getElementById('pauseBtn').onclick = () => {
+        if (!isGpsRecording) return;
+        updateStats();
+        if (isPaused || autoPaused) {
+            isPaused = false; autoPaused = false;
+            lastTick = Date.now(); lastMoveTime = Date.now(); lastFix = null; lastAny = null;
+        } else {
+            isPaused = true;
+        }
+        refreshPauseUI(); updateStats(); saveDraft();
+    };
 }
 
 async function acquireWakeLock() {
@@ -543,7 +623,7 @@ const DRAFT_KEY = 'zygiaiDraft';
 
 function saveDraft() {
     if (!isGpsRecording || !currentLineData) return;
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ line: currentLineData, startTime, savedAt: Date.now() })); } catch (e) {}
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ line: currentLineData, paused: isPaused, savedAt: Date.now() })); } catch (e) {}
 }
 function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
 
@@ -592,6 +672,13 @@ function defaultName(type) {
     return `${part} ${ACTIVITIES[type].noun}`;
 }
 
+function refreshPauseUI() {
+    const act = ACTIVITIES[currentLineData && currentLineData.activity] || ACTIVITIES.walk;
+    document.getElementById('liveActivity').textContent = isPaused ? 'Pristabdyta' : autoPaused ? 'Automatinė pauzė' : `${act.label} · įrašoma`;
+    document.getElementById('pauseBtn').textContent = (isPaused || autoPaused) ? 'Tęsti' : 'Pauzė';
+    recordPanel.classList.toggle('paused', isPaused || autoPaused);
+}
+
 function startGps(resume) {
     if (!('geolocation' in navigator)) return alert('GPS nepalaikomas');
 
@@ -627,22 +714,27 @@ function startGps(resume) {
     currentPolyline = createRecordingPolyline(currentLineData);
 
     // Išvalome filtrų būseną
-    lastFix = null; rejectedInRow = 0;
+    lastFix = null; lastAny = null; rejectedInRow = 0;
     if (resume && currentLineData.points.length) {
         lastFix = { pt: currentLineData.points[currentLineData.points.length - 1], t: resume.savedAt };
     }
-    curSpeed = 0; lastMoveTime = 0;
+    curSpeed = 0; lastMoveTime = Date.now(); isPaused = false; autoPaused = false;
     altWindow = []; smoothAlt = null; anchorAlt = null;
 
     watchId = navigator.geolocation.watchPosition(onGps, onGpsError, GPS_OPTS);
-    startTime = Date.now() - totalElapsed * 1000;
-    if (resume) startTime = resume.startTime;   // laikas, praleistas užmigus ekranui, įskaičiuojamas
+    activeMs = totalElapsed * 1000; lastTick = Date.now();
+    autoPauseOn = document.getElementById('autoPauseChk').checked;
+    if (resume) {   // laikas, praleistas užmigus ekranui, įskaičiuojamas (nebent buvo pauzė)
+        isPaused = !!resume.paused;
+        if (!isPaused) activeMs += Date.now() - resume.savedAt;
+    }
     timerInterval = setInterval(updateStats, 1000);
     acquireWakeLock();
 
     isGpsRecording = true;
     document.getElementById('setupView').classList.add('hidden');
     statsPanel.classList.remove('hidden');
+    refreshPauseUI();
     syncPanel();
     updateStats();
 }
@@ -692,7 +784,33 @@ function onGps(pos) {
     // 1) Per prastas tikslumas – neįtraukiame į matavimus
     if (!(accuracy <= MAX_ACCURACY)) return;
 
+    const sp = (typeof speed === 'number' && isFinite(speed) && speed >= 0) ? Math.min(speed, MAX_SPEED) : null;
+    const thr = (ACTIVITIES[currentLineData.activity] || ACTIVITIES.walk).pace ? 0.6 : 1.5;   // m/s – „stovi“ riba
+
+    if (isPaused) return;
+    if (autoPaused) {
+        const moving = sp !== null ? sp > thr * 1.5
+            : (lastFix ? L.latLng(lastFix.pt).distanceTo(L.latLng(pt)) > Math.max(MIN_STEP, accuracy) * 1.5 : true);
+        if (!moving) return;
+        autoPaused = false; lastTick = Date.now(); lastMoveTime = Date.now(); lastAny = null;
+        refreshPauseUI();
+    }
+
     const pts = currentLineData.points;
+
+    // Atstumas pagal Doplerio greitį: GPS „speed“ yra daug tikslesnis nei taškų atstumų sumavimas,
+    // nes atstumus tarp „šokinėjančių“ taškų sumuojant kaupiasi zigzagų ilgis (+5–10 %)
+    let dopplerOk = false;
+    if (lastAny && sp !== null && lastAny.speed !== null) {
+        const dtA = (t - lastAny.t) / 1000;
+        if (dtA > 0 && dtA <= 30) {
+            const v = (sp + lastAny.speed) / 2;
+            if (v > 0.4) currentLineData.distance += v * dtA;   // žemiau 0,4 m/s – stovėjimas / triukšmas
+            dopplerOk = true;
+        }
+    }
+    lastAny = { t, speed: sp };
+    if (sp !== null && sp > thr) lastMoveTime = Date.now();
 
     if (lastFix) {
         const dt = (t - lastFix.t) / 1000;
@@ -708,14 +826,15 @@ function onGps(pos) {
             if (rejectedInRow < 5) return;
             // 5 iš eilės – tikriausiai signalas atsistatė kitoje vietoje; pradedame iš naujo be atstumo
             lastFix = { pt, t };
-            pts.push(pt);
+            pts.push([lat, lng, Math.round(activeNow() / 1000)]);
             if (currentPolyline) currentPolyline.setLatLngs(pts);
             rejectedInRow = 0;
             return;
         }
         rejectedInRow = 0;
 
-        currentLineData.distance += d;
+        // Tarpas (pvz. užmigo ekranas) arba GPS neduoda greičio – naudojame atstumą tarp taškų
+        if (dt > 30 || !dopplerOk) currentLineData.distance += d;
 
         // Dabartinis greitis (glotninamas)
         const raw = (typeof speed === 'number' && isFinite(speed) && speed >= 0) ? speed : d / dt;
@@ -733,19 +852,30 @@ function onGps(pos) {
     }
 
     lastFix = { pt, t };
-    pts.push(pt);
+    pts.push([lat, lng, Math.round(activeNow() / 1000)]);
     if (currentPolyline) currentPolyline.setLatLngs(pts);
     updateStats();
 }
 
 function updateStats() {
     if (!isGpsRecording || !currentLineData) return;
-    totalElapsed = Math.floor((Date.now() - startTime) / 1000);
+    const now = Date.now();
+    if (!isPaused && !autoPaused) activeMs += now - lastTick;
+    lastTick = now;
+
+    // Automatinė pauzė: ilgai nejudama
+    if (autoPauseOn && !isPaused && !autoPaused && lastFix && now - lastMoveTime > AUTO_PAUSE_DELAY) {
+        autoPaused = true;
+        activeMs = Math.max(0, activeMs - AUTO_PAUSE_DELAY);   // nejudėjimo laikas neįskaičiuojamas
+        refreshPauseUI();
+    }
+
+    totalElapsed = Math.floor(activeMs / 1000);
     currentLineData.duration = totalElapsed;
     if (totalElapsed % 5 === 0) saveDraft();
 
-    // Nejudant greitis krenta į 0
-    if (Date.now() - lastMoveTime > STILL_TIMEOUT) curSpeed = 0;
+    // Nejudant / pauzės metu greitis 0
+    if (isPaused || autoPaused || now - lastMoveTime > STILL_TIMEOUT) curSpeed = 0;
 
     document.getElementById('statTime').textContent = formatTime(totalElapsed);
     document.getElementById('statDistance').textContent = formatDist(currentLineData.distance);
@@ -755,6 +885,7 @@ function updateStats() {
 
 async function stopGps(save = true) {
     if (!isGpsRecording) return;
+    updateStats();
     isGpsRecording = false;
     clearDraft();
     navigator.geolocation.clearWatch(watchId);
@@ -812,6 +943,17 @@ async function deleteLine(id) {
     if (mapHistory) renderHistoryPolylines();
 }
 
+document.getElementById('card-gpx').onclick = () => { if (cardLine) exportGpx(cardLine); };
+document.getElementById('card-rename').onclick = async () => {
+    if (!cardLine) return;
+    const n = prompt('Naujas pavadinimas', cardLine.name);
+    if (!n || !n.trim()) return;
+    cardLine.name = n.trim().slice(0, 60);
+    cardTitle.textContent = cardLine.name;
+    await isaugotiISupabase(cardLine);
+    renderHistoryList();
+    document.querySelectorAll('.act-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === cardLine.id));
+};
 document.getElementById('card-delete').onclick = () => {
     if (cardLine && confirm(`Ištrinti „${cardLine.name}“?`)) deleteLine(cardLine.id);
 };

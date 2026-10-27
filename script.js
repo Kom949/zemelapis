@@ -1,4 +1,24 @@
 // SUPABASE PRISIJUNGIMAS
+// -----------------------------------------------------------------------------
+// SUPABASE_ANON_KEY yra „publishable key“ – jį saugu turėti naršyklėje.
+// Šis raktas suteikia prieigą TIK su RLS (Row Level Security) apribojimais.
+//
+// PER JS GALIMA atlikti tik duomenų operacijas (DML):
+//   • SELECT  – uzkrautiIsSupabase()
+//   • INSERT  – isaugotiISupabase() (naujas maršrutas)
+//   • UPDATE  – isaugotiISupabase() (tęsiamas maršrutas)
+//   • DELETE  – istrintiIsSupabase()
+//
+// PER JS NEGALIMA atlikti struktūros keitimų (DDL):
+//   ✗ ALTER TABLE  (pridėti stulpelius, pvz. activity, max_speed, moving_time, calories)
+//   ✗ CREATE INDEX
+//   ✗ CREATE POLICY (RLS taisyklės)
+// Šioms komandoms reikia „service_role“ rakto, kurio NIEKADA NEGALIMA laikyti
+// naršyklėje – kas jį turi, turi pilną prieigą prie visos duomenų bazės.
+//
+// Struktūros keitimams naudokite: Supabase Dashboard → SQL Editor
+// Užklausų pavyzdžiai: žr. /home/z/my-project/download/DUOMENU_BAZE.md
+// -----------------------------------------------------------------------------
 const SUPABASE_URL = 'https://hxbkmstegyimjkbnlgfa.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_lfVhNCx5D-iVDFOm44vjHQ_ErK0Zsnt';
 let supabaseClient = null;
@@ -21,12 +41,35 @@ const ICONS = {
     other: '<path d="M5 21V4M5 4h12l-2 4 2 4H5"/>'
 };
 const ACTIVITIES = {
-    walk:  { label: 'Ėjimas',   noun: 'ėjimas',     pace: true,  maxSpeed: 8,  minStep: 5 },
-    hike:  { label: 'Žygis',    noun: 'žygis',      pace: true,  maxSpeed: 8,  minStep: 5 },
-    run:   { label: 'Bėgimas',  noun: 'bėgimas',    pace: true,  maxSpeed: 12, minStep: 5 },
-    bike:  { label: 'Dviratis', noun: 'važiavimas', pace: false, maxSpeed: 25, minStep: 8 },
-    other: { label: 'Kita',     noun: 'užsiėmimas', pace: false, maxSpeed: 30, minStep: 8 }
+    walk:  { label: 'Ėjimas',   noun: 'ėjimas',     pace: true,  maxSpeed: 8,  minStep: 5, met: 3.5 },
+    hike:  { label: 'Žygis',    noun: 'žygis',      pace: true,  maxSpeed: 8,  minStep: 5, met: 6.0 },
+    run:   { label: 'Bėgimas',  noun: 'bėgimas',    pace: true,  maxSpeed: 12, minStep: 5, met: 9.8 },
+    bike:  { label: 'Dviratis', noun: 'važiavimas', pace: false, maxSpeed: 25, minStep: 8, met: 7.5 },
+    other: { label: 'Kita',     noun: 'užsiėmimas', pace: false, maxSpeed: 30, minStep: 8, met: 5.0 }
 };
+
+// MET vertės kalorijoms skaičiuoti (kcal × kg × valanda)
+// Šaltinis: „Compendium of Physical Activities“
+const DEFAULT_WEIGHT = 70;  // kg – numatytasis, jei nėra įvesta
+const getWeight = () => {
+    const v = parseInt(localStorage.getItem('userWeight') || '0', 10);
+    return (v >= 30 && v <= 200) ? v : DEFAULT_WEIGHT;
+};
+
+// Lokaliai saugomi papildomi duomenys (max greitis, kalorijos, judėjimo laikas),
+// jei duomenų bazėje dar nėra atitinkamų stulpelių.
+const getExtraMap = () => { try { return JSON.parse(localStorage.getItem('zygiaiExtra') || '{}'); } catch (e) { return {}; } };
+const setLocalExtra = (id, key, val) => {
+    try {
+        const m = getExtraMap();
+        if (!m[id]) m[id] = {};
+        m[id][key] = val;
+        localStorage.setItem('zygiaiExtra', JSON.stringify(m));
+    } catch (e) {}
+};
+
+// Sporto tipo filtrai žemėlapyje
+const activeFilters = new Set();   // tuščias = rodyti visus
 let selectedActivity = 'walk';
 const iconSvg = (type, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[type] || ICONS.other}</svg>`;
 
@@ -73,6 +116,9 @@ let lastAny = null;             // { t, speed } paskutinis tikslus fiksavimas (D
 let lastFix = null;             // { pt, t } paskutinis priimtas taškas
 let rejectedInRow = 0;
 let curSpeed = 0, lastMoveTime = 0;
+let maxSpeedMs = 0;             // maksimalus greitis (m/s) per visą įrašymą
+let movingMs = 0;               // laikas, kai iš tikrųjų judama (be pauzių ir stovėjimo)
+let totalCalories = 0;          // kcal – perskaičiuojama iš judėjimo laiko ir MET
 let activeMs = 0, lastTick = 0, isPaused = false, autoPaused = false, autoPauseOn = true;
 const AUTO_PAUSE_DELAY = 8000;  // ms be judėjimo -> automatinė pauzė
 const activeNow = () => activeMs + ((isPaused || autoPaused || !lastTick) ? 0 : Date.now() - lastTick);
@@ -217,14 +263,23 @@ function computeSplits(line) {
 
 function renderSplits(line) {
     const box = document.getElementById('card-splits');
+    if (!box) return;
     const sp = computeSplits(line);
     if (!sp.length) { box.innerHTML = ''; return; }
     const a = ACTIVITIES[line.activity] || ACTIVITIES.walk;
     const paces = sp.map(x => x.sec / (x.dist / 1000)), best = Math.min(...paces);
-    box.innerHTML = `<div class="split-head"><span>Km</span><span>${a.pace ? 'Tempas' : 'Greitis'}</span></div>` +
-        sp.map((x, i) => `<div class="split"><span class="sk">${x.partial ? (x.dist / 1000).toFixed(2) : x.km}</span>
+    box.innerHTML = `<div class="split-head"><span>Km</span><span>${a.pace ? 'Tempas' : 'Greitis'}${sp.length > 1 ? ' · greičiausias paryškintas' : ''}</span></div>` +
+        sp.map((x, i) => `<div class="split${paces[i] === best ? ' best' : ''}"><span class="sk">${x.partial ? (x.dist / 1000).toFixed(2) : x.km}</span>
             <span class="sbar"><i style="width:${(30 + 70 * best / paces[i]).toFixed(0)}%"></i></span>
             <b>${fmtSpeedFor(line.activity, x.dist / x.sec)}</b></div>`).join('');
+}
+
+// Kalorijų skaičiavimas pagal MET × svoris (kg) × laikas (h)
+// Jei nėra judėjimo laiko, naudojama visa trukmė.
+function calcCalories(activity, durationSec, movingSec, weight) {
+    const a = ACTIVITIES[activity] || ACTIVITIES.walk;
+    const t = ((movingSec || durationSec || 0)) / 3600;
+    return a.met * weight * t;
 }
 
 function exportGpx(line) {
@@ -257,6 +312,17 @@ function showRouteCard(line, poly) {
     document.getElementById('card-speed-label').textContent = a.pace ? 'Vid. tempas' : 'Vid. greitis';
     cardSpeed.textContent = line.duration > 0 && line.distance > 0 ? fmtSpeedFor(line.activity, line.distance / line.duration) : '--';
     cardElevation.textContent = `${Math.round(line.elevationGain || 0)} m`;
+
+    // Maksimalus greitis (arba greičiausias km-tempas, jei veikla yra „pace“ tipo)
+    const maxSpeed = line.maxSpeed || 0;
+    document.getElementById('card-maxspeed-label').textContent = a.pace ? 'Greičiausias km' : 'Maks. greitis';
+    document.getElementById('card-maxspeed').textContent = maxSpeed > 0 ? fmtSpeedFor(line.activity, maxSpeed) : '--';
+
+    // Kalorijos: pirmiausia saugotos; jei nėra – perskaičiuojame iš MET, svorio ir laiko
+    const weight = getWeight();
+    const kcal = line.calories || calcCalories(line.activity, line.duration, line.movingTime, weight);
+    document.getElementById('card-calories').textContent = kcal > 0 ? Math.round(kcal) + ' kcal' : '--';
+
     renderSplits(line);
     cardDate.textContent = `${a.label} · ${whenText(line)}`;
     document.querySelectorAll('.act-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === line.id));
@@ -268,8 +334,10 @@ function showRouteCard(line, poly) {
 // „Mano veikla“ sąrašas atsiranda tik paspaudus mygtuką arba maršrutą
 function setDrawer(open) {
     const list = document.getElementById('history-list');
+    if (!list) return;
     list.classList.toggle('open', open);
-    document.getElementById('openActBtn').classList.toggle('hidden', open);
+    const openActBtnEl = document.getElementById('openActBtn');
+    if (openActBtnEl) openActBtnEl.classList.toggle('hidden', open);
     document.documentElement.style.setProperty('--drawer-h', open ? list.offsetHeight + 'px' : '0px');
 }
 
@@ -350,19 +418,28 @@ async function uzkrautiIsSupabase() {
     const { data, error } = await supabaseClient.from('zygiai').select('*').order('id', { ascending: true });
     if (error) { console.error('Klaida kraunant:', error.message); return; }
     if (data) {
-        linesData = data.map(item => ({
-            id: item.id,
-            name: item.title || 'Maršrutas',
-            color: item.color || '#2563eb',
-            points: item.coordinates || [],
-            distance: item.distance || 0,
-            duration: item.duration || 0,
-            elevationGain: item.elevationGain || 0,
-            date: (item.date || '-').split('|')[0],
-            startedAt: (item.date || '').split('|')[1] || '',
-            endedAt: (item.date || '').split('|')[2] || '',
-            activity: item.activity || getTypeMap()[item.id] || 'walk'
-        }));
+        const extra = getExtraMap();
+        linesData = data.map(item => {
+            const id = item.id;
+            const e = extra[id] || {};
+            return {
+                id,
+                name: item.title || 'Maršrutas',
+                color: item.color || '#2563eb',
+                points: item.coordinates || [],
+                distance: item.distance || 0,
+                duration: item.duration || 0,
+                elevationGain: item.elevationGain || 0,
+                date: (item.date || '-').split('|')[0],
+                startedAt: (item.date || '').split('|')[1] || '',
+                endedAt: (item.date || '').split('|')[2] || '',
+                activity: item.activity || getTypeMap()[id] || 'walk',
+                // Šie laukai saugomi lokaliai, kol duomenų bazėje nėra stulpelių:
+                maxSpeed: typeof item.max_speed === 'number' ? item.max_speed : (e.maxSpeed || 0),
+                movingTime: typeof item.moving_time === 'number' ? item.moving_time : (e.movingTime || 0),
+                calories: typeof item.calories === 'number' ? item.calories : (e.calories || 0)
+            };
+        });
         updateSelects();
         checkDraft();
     }
@@ -383,13 +460,26 @@ async function isaugotiISupabase(line) {
         date: encodeDate(line)
     };
 
+    // Papildomi laukai – siunčiami tik jei duomenų bazėje yra atitinkami stulpeliai;
+    // priešingu atveju paliekami tik lokaliai (žr. žemiau setLocalExtra).
+    const extra = {
+        activity: line.activity,
+        max_speed: Math.round((line.maxSpeed || 0) * 100) / 100,   // m/s, 2 skaitmenys po kablelio
+        moving_time: Math.round(line.movingTime || 0),
+        calories: Math.round(line.calories || 0)
+    };
+
     const send = (p) => line.isNew
         ? supabaseClient.from('zygiai').insert([{ ...p, user_id: user.id }]).select()
         : supabaseClient.from('zygiai').update(p).eq('id', line.id).select();
 
-    let res = await send({ ...payload, activity: line.activity });
-    if (res.error && /activity/i.test(res.error.message)) {
-        res = await send(payload);   // lentelėje dar nėra stulpelio „activity“
+    let res = await send({ ...payload, ...extra });
+    if (res.error && /column|activity|max_speed|moving_time|calories/i.test(res.error.message)) {
+        // Bent vieno stulpelio nėra – praleidžiame papildomus ir siunčiame tik pagrindinius
+        res = await send({ ...payload, activity: line.activity });
+        if (res.error && /activity/i.test(res.error.message)) {
+            res = await send(payload);
+        }
     }
     if (res.error || !res.data || !res.data.length) {
         console.error('Klaida išsaugant:', res.error && res.error.message);
@@ -398,6 +488,10 @@ async function isaugotiISupabase(line) {
     line.id = res.data[0].id;
     line.isNew = false;
     setLocalType(line.id, line.activity);
+    // Papildomus duomenis visada saugome ir lokaliai (atsarginė kopija, jei DB neturi stulpelių)
+    setLocalExtra(line.id, 'maxSpeed', extra.max_speed);
+    setLocalExtra(line.id, 'movingTime', extra.moving_time);
+    setLocalExtra(line.id, 'calories', extra.calories);
     return true;
 }
 
@@ -413,6 +507,104 @@ function createRecordingPolyline(line) {
 
 const OVERLAP_CELL = 8;   // m – tinklelio ląstelė persidengimams aptikti
 
+// Filtruojami maršrutai pagal aktyvius sporto tipus (jei rinkinys tuščias – visi)
+const getVisibleLines = () => linesData.filter(l =>
+    l.points && l.points.length > 1 &&
+    (activeFilters.size === 0 || activeFilters.has(l.activity))
+);
+
+// Sporto tipų filtrų juostos generavimas
+function renderActivityFilter() {
+    const box = document.getElementById('activityFilter');
+    if (!box) return;
+    // Suskaičiuojame, kiek kiekvieno tipo įrašų yra iš viso (nepriklausomai nuo filtro)
+    const counts = {};
+    Object.keys(ACTIVITIES).forEach(k => counts[k] = 0);
+    linesData.forEach(l => { if (l.points && l.points.length > 1 && counts[l.activity] != null) counts[l.activity]++; });
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+
+    box.innerHTML = '';
+    // „Visi“ mygtukas
+    const allBtn = document.createElement('button');
+    allBtn.type = 'button';
+    allBtn.className = 'act-filter-btn' + (activeFilters.size === 0 ? ' active' : '');
+    allBtn.innerHTML = `<span>Visi</span><span class="filter-count">${total}</span>`;
+    allBtn.onclick = () => { activeFilters.clear(); renderHistoryPolylines(); };
+    box.appendChild(allBtn);
+
+    Object.keys(ACTIVITIES).forEach(key => {
+        if (counts[key] === 0) return;   // nerodom tuščių tipų
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'act-filter-btn' + (activeFilters.has(key) ? ' active' : '');
+        b.innerHTML = `${iconSvg(key, 16)}<span>${ACTIVITIES[key].label}</span><span class="filter-count">${counts[key]}</span>`;
+        b.onclick = () => {
+            if (activeFilters.has(key)) activeFilters.delete(key);
+            else activeFilters.add(key);
+            renderHistoryPolylines();
+        };
+        box.appendChild(b);
+    });
+}
+
+// Atstumas (m) nuo taško P iki atkarpos A–B (Leaflet latlng objektai)
+function distToSegment(p, a, b) {
+    let x = a.lng, y = a.lat, dx = b.lng - a.lng, dy = b.lat - a.lat;
+    if (dx === 0 && dy === 0) return p.distanceTo(a);
+    const t = Math.max(0, Math.min(1, ((p.lng - x) * dx + (p.lat - y) * dy) / (dx * dx + dy * dy)));
+    return p.distanceTo(L.latLng(y + t * dy, x + t * dx));
+}
+
+// Suranda visus matomus maršrutus, einančius per nurodytą spindulį (m) nuo taško
+function findRoutesNearPoint(latlng, radius = 15) {
+    const out = [];
+    getVisibleLines().forEach(l => {
+        for (let i = 0; i < l.points.length - 1; i++) {
+            const d = distToSegment(latlng, L.latLng(l.points[i]), L.latLng(l.points[i + 1]));
+            if (d <= radius) { out.push(l); break; }
+        }
+    });
+    return out;
+}
+
+// Pasirinkimo popup, kai paspaudus maršruto vietoje yra daugiau nei vienas maršrutas
+function showCrossingPopup(latlng, lines) {
+    if (!mapHistory) return;
+    const html = `<div class="crossing-popup">
+        <div class="crossing-popup-head">${lines.length} maršrutai šioje vietoje</div>
+        ${lines.map(l => {
+            const a = ACTIVITIES[l.activity] || ACTIVITIES.walk;
+            const sp = l.duration > 0 && l.distance > 0 ? fmtSpeedFor(l.activity, l.distance / l.duration) : '--';
+            return `<div class="crossing-item" data-id="${l.id}">
+                <span class="crossing-dot" style="background:${l.color}">${iconSvg(l.activity, 14)}</span>
+                <div class="crossing-info">
+                    <div class="crossing-name">${l.name}</div>
+                    <div class="crossing-meta">${a.label} · ${formatDist(l.distance)} · ${sp}</div>
+                </div>
+            </div>`;
+        }).join('')}
+    </div>`;
+    const popup = L.popup({ maxWidth: 320, className: 'crossing-leaflet-popup' })
+        .setLatLng(latlng)
+        .setContent(html)
+        .openOn(mapHistory);
+    // Paspaudus ant konkretaus maršruto sąraše – uždarome popup ir parodome jo kortelę
+    setTimeout(() => {
+        const root = popup.getElement();
+        if (!root) return;
+        root.querySelectorAll('.crossing-item').forEach(el => {
+            el.onclick = (ev) => {
+                ev.stopPropagation();
+                const id = +el.dataset.id;
+                const line = lines.find(x => x.id === id);
+                const poly = historyPolylineMap.get(id);
+                mapHistory.closePopup();
+                if (line) showRouteCard(line, poly);
+            };
+        });
+    }, 30);
+}
+
 function renderHistoryPolylines() {
     if (!mapHistory) return;
     selectedPoly = null;
@@ -420,9 +612,9 @@ function renderHistoryPolylines() {
     historyPolylineMap.forEach(g => mapHistory.removeLayer(g));
     historyPolylineMap.clear();
 
-    const lines = linesData.filter(l => l.points && l.points.length > 1);
+    const lines = getVisibleLines();
     historyEmpty.classList.toggle('hidden', lines.length > 0);
-    if (!lines.length) { renderHistoryList(); return; }
+    if (!lines.length) { renderHistoryList(); renderActivityFilter(); return; }
 
     // 1) Kiek skirtingų maršrutų eina per kiekvieną vietą (spalvos nesvarbios)
     const dLat = OVERLAP_CELL / 111320;
@@ -475,10 +667,21 @@ function renderHistoryPolylines() {
     historyHalo = L.featureGroup(halos).addTo(mapHistory);
     built.forEach(({ l, layers }) => {
         const g = L.featureGroup(layers).addTo(mapHistory);
-        g.on('click', (e) => { L.DomEvent.stopPropagation(e); showRouteCard(l, g); });
+        // Paspaudus ant maršruto – patikriname, ar toje vietoje nėra ir kitų;
+        // jei taip, parodome pasirinkimo popup, kad vartotojas galėtų pasirinkti kurį skaityti.
+        g.on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            const near = findRoutesNearPoint(e.latlng, 15);
+            if (near.length > 1) {
+                showCrossingPopup(e.latlng, near);
+            } else {
+                showRouteCard(l, g);
+            }
+        });
         historyPolylineMap.set(l.id, g);
     });
     renderHistoryList();
+    renderActivityFilter();
 }
 
 function thumbSvg(pts, color) {
@@ -498,21 +701,22 @@ function thumbSvg(pts, color) {
 function renderHistoryList() {
     const box = document.getElementById('history-items');
     if (!box) return;
+    const visible = getVisibleLines();
     const sum = document.getElementById('history-summary');
     if (sum) {
         const monday = new Date(); monday.setHours(0, 0, 0, 0);
         monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
-        const wk = { n: 0, d: 0, t: 0 }, all = { n: 0, d: 0, t: 0 };
-        linesData.forEach(l => {
-            all.n++; all.d += l.distance || 0; all.t += l.duration || 0;
+        const wk = { n: 0, d: 0, t: 0, c: 0 }, all = { n: 0, d: 0, t: 0, c: 0 };
+        visible.forEach(l => {
+            all.n++; all.d += l.distance || 0; all.t += l.duration || 0; all.c += l.calories || 0;
             const dt = new Date((l.date || '') + 'T00:00:00');
-            if (!isNaN(dt) && dt >= monday) { wk.n++; wk.d += l.distance || 0; wk.t += l.duration || 0; }
+            if (!isNaN(dt) && dt >= monday) { wk.n++; wk.d += l.distance || 0; wk.t += l.duration || 0; wk.c += l.calories || 0; }
         });
-        const cell = (title, o) => `<div><small>${title}</small><b>${formatDist(o.d)}</b><span>${formatTime(o.t)} · ${o.n} veikl.</span></div>`;
+        const cell = (title, o) => `<div><small>${title}</small><b>${formatDist(o.d)}</b><span>${formatTime(o.t)} · ${o.n} veikl.${o.c ? ' · ' + Math.round(o.c) + ' kcal' : ''}</span></div>`;
         sum.innerHTML = cell('Ši savaitė', wk) + cell('Iš viso', all);
     }
     box.innerHTML = '';
-    [...linesData].reverse().forEach(line => {
+    [...visible].reverse().forEach(line => {
         if (!line.points || line.points.length < 2) return;
         const a = ACTIVITIES[line.activity] || ACTIVITIES.walk;
         const el = document.createElement('button');
@@ -549,15 +753,48 @@ if (fitAllBtn) {
     };
 }
 
-document.getElementById('openActBtn').onclick = () => setDrawer(true);
-document.getElementById('closeActBtn').onclick = () => { setDrawer(false); closeCard(); };
+const openActBtnClick = document.getElementById('openActBtn');
+if (openActBtnClick) openActBtnClick.onclick = () => setDrawer(true);
+const closeActBtnClick = document.getElementById('closeActBtn');
+if (closeActBtnClick) closeActBtnClick.onclick = () => { setDrawer(false); closeCard(); };
 
 const autoChk = document.getElementById('autoPauseChk');
-try { autoChk.checked = localStorage.getItem('autoPause') !== '0'; } catch (e) {}
-autoChk.onchange = () => { autoPauseOn = autoChk.checked; try { localStorage.setItem('autoPause', autoChk.checked ? '1' : '0'); } catch (e) {} };
+if (autoChk) {
+    autoChk.checked = localStorage.getItem('autoPause') !== '0';
+    autoChk.onchange = () => {
+        autoPauseOn = autoChk.checked;
+        try { localStorage.setItem('autoPause', autoChk.checked ? '1' : '0'); } catch (e) {}
+    };
+    autoPauseOn = autoChk.checked;
+}
+
+// Svorio įvestis – kalorijoms skaičiuoti (išlieka tarp sesijų)
+const weightInput = document.getElementById('weightInput');
+if (weightInput) {
+    const savedW = parseInt(localStorage.getItem('userWeight') || '0', 10);
+    if (savedW >= 30 && savedW <= 200) weightInput.value = savedW;
+    weightInput.onchange = () => {
+        const v = parseInt(weightInput.value, 10);
+        if (v >= 30 && v <= 200) {
+            try { localStorage.setItem('userWeight', String(v)); } catch (e) {}
+        }
+    };
+    weightInput.oninput = () => {
+        const v = parseInt(weightInput.value, 10);
+        if (v >= 30 && v <= 200) {
+            try { localStorage.setItem('userWeight', String(v)); } catch (e) {}
+        }
+    };
+}
 
 const toggleMoreBtn = document.getElementById('toggleMoreBtn');
-toggleMoreBtn.onclick = () => { document.getElementById('moreOpts').classList.toggle('hidden'); syncPanel(); };
+if (toggleMoreBtn) {
+    toggleMoreBtn.onclick = () => {
+        const moreOptsEl = document.getElementById('moreOpts');
+        if (moreOptsEl) moreOptsEl.classList.toggle('hidden');
+        syncPanel();
+    };
+}
 
 // Veiklos tipo pasirinkimas
 const activityRow = document.getElementById('activityRow');
@@ -577,9 +814,10 @@ Object.keys(ACTIVITIES).forEach(key => {
 // Skydelio aukštis -> žemėlapio atribucija nepaslepiama
 const recordPanel = document.getElementById('recordPanel');
 function syncPanel() {
+    if (!recordPanel) return;
     document.documentElement.style.setProperty('--panel-h', recordPanel.offsetHeight + 'px');
 }
-if (window.ResizeObserver) new ResizeObserver(syncPanel).observe(recordPanel);
+if (window.ResizeObserver && recordPanel) new ResizeObserver(syncPanel).observe(recordPanel);
 syncPanel();
 
 document.querySelectorAll('input[name="lineOption"]').forEach(r => {
@@ -595,8 +833,10 @@ function updateSelects() {
 // GPS Įrašymo logika
 if (gpsDrawBtn) {
     gpsDrawBtn.onclick = () => startGps();
-    document.getElementById('stopBtn').onclick = () => stopGps(true);
-    document.getElementById('pauseBtn').onclick = () => {
+    const stopBtnEl = document.getElementById('stopBtn');
+    if (stopBtnEl) stopBtnEl.onclick = () => stopGps(true);
+    const pauseBtnEl = document.getElementById('pauseBtn');
+    if (pauseBtnEl) pauseBtnEl.onclick = () => {
         if (!isGpsRecording) return;
         updateStats();
         if (isPaused || autoPaused) {
@@ -674,9 +914,11 @@ function defaultName(type) {
 
 function refreshPauseUI() {
     const act = ACTIVITIES[currentLineData && currentLineData.activity] || ACTIVITIES.walk;
-    document.getElementById('liveActivity').textContent = isPaused ? 'Pristabdyta' : autoPaused ? 'Automatinė pauzė' : `${act.label} · įrašoma`;
-    document.getElementById('pauseBtn').textContent = (isPaused || autoPaused) ? 'Tęsti' : 'Pauzė';
-    recordPanel.classList.toggle('paused', isPaused || autoPaused);
+    const liveActivityEl = document.getElementById('liveActivity');
+    if (liveActivityEl) liveActivityEl.textContent = isPaused ? 'Pristabdyta' : autoPaused ? 'Automatinė pauzė' : `${act.label} · įrašoma`;
+    const pauseBtnEl = document.getElementById('pauseBtn');
+    if (pauseBtnEl) pauseBtnEl.textContent = (isPaused || autoPaused) ? 'Tęsti' : 'Pauzė';
+    if (recordPanel) recordPanel.classList.toggle('paused', isPaused || autoPaused);
 }
 
 function startGps(resume) {
@@ -703,7 +945,8 @@ function startGps(resume) {
             activity: selectedActivity,
             name: lineNameInput.value.trim() || defaultName(selectedActivity),
             color: selectedColor, date: new Date().toLocaleDateString('lt-LT'), startedAt: hm(new Date()), endedAt: '',
-            distance: 0, duration: 0, elevationGain: 0, points: []
+            distance: 0, duration: 0, elevationGain: 0, points: [],
+            maxSpeed: 0, movingTime: 0, calories: 0
         };
         totalElapsed = 0;
     }
@@ -719,11 +962,16 @@ function startGps(resume) {
         lastFix = { pt: currentLineData.points[currentLineData.points.length - 1], t: resume.savedAt };
     }
     curSpeed = 0; lastMoveTime = Date.now(); isPaused = false; autoPaused = false;
+    // Nauji sekikliai: maksimalus greitis, judėjimo laikas (ms), kalorijos perskaičiuojamos vėliau
+    maxSpeedMs = currentLineData.maxSpeed || 0;
+    movingMs = (currentLineData.movingTime || 0) * 1000;
+    totalCalories = 0;
     altWindow = []; smoothAlt = null; anchorAlt = null;
 
     watchId = navigator.geolocation.watchPosition(onGps, onGpsError, GPS_OPTS);
     activeMs = totalElapsed * 1000; lastTick = Date.now();
-    autoPauseOn = document.getElementById('autoPauseChk').checked;
+    const autoChkEl = document.getElementById('autoPauseChk');
+    autoPauseOn = autoChkEl ? autoChkEl.checked : autoPauseOn;
     if (resume) {   // laikas, praleistas užmigus ekranui, įskaičiuojamas (nebent buvo pauzė)
         isPaused = !!resume.paused;
         if (!isPaused) activeMs += Date.now() - resume.savedAt;
@@ -810,7 +1058,10 @@ function onGps(pos) {
         }
     }
     lastAny = { t, speed: sp };
-    if (sp !== null && sp > thr) lastMoveTime = Date.now();
+    if (sp !== null && sp > thr) {
+        lastMoveTime = Date.now();
+        if (sp > maxSpeedMs) maxSpeedMs = sp;   // fiksuojame didžiausią greitį
+    }
 
     if (lastFix) {
         const dt = (t - lastFix.t) / 1000;
@@ -839,6 +1090,7 @@ function onGps(pos) {
         // Dabartinis greitis (glotninamas)
         const raw = (typeof speed === 'number' && isFinite(speed) && speed >= 0) ? speed : d / dt;
         curSpeed = curSpeed === 0 ? raw : curSpeed * 0.6 + raw * 0.4;
+        if (raw > maxSpeedMs) maxSpeedMs = raw;   // fiksuojame didžiausią greitį (ir be Doplerio)
         lastMoveTime = Date.now();
 
         // Aukštis skaičiuojamas tik kai realiai pajudėta ir aukščio tikslumas geras
@@ -860,7 +1112,11 @@ function onGps(pos) {
 function updateStats() {
     if (!isGpsRecording || !currentLineData) return;
     const now = Date.now();
-    if (!isPaused && !autoPaused) activeMs += now - lastTick;
+    const dt = now - lastTick;
+    // Judama = ne pauzė, ne auto-pauzė, ir neseniai buvo judėjimo signalų
+    const moving = !isPaused && !autoPaused && lastFix && (now - lastMoveTime <= STILL_TIMEOUT);
+    if (!isPaused && !autoPaused) activeMs += dt;
+    if (moving) movingMs += dt;   // tikras judėjimo laikas (be pauzių ir stovėjimo)
     lastTick = now;
 
     // Automatinė pauzė: ilgai nejudama
@@ -872,6 +1128,12 @@ function updateStats() {
 
     totalElapsed = Math.floor(activeMs / 1000);
     currentLineData.duration = totalElapsed;
+    currentLineData.movingTime = Math.floor(movingMs / 1000);
+    currentLineData.maxSpeed = maxSpeedMs;
+    // Kalorijos: MET × svoris (kg) × valandos (judėjimo laikas)
+    const a = ACTIVITIES[currentLineData.activity] || ACTIVITIES.walk;
+    totalCalories = a.met * getWeight() * (currentLineData.movingTime / 3600);
+    currentLineData.calories = totalCalories;
     if (totalElapsed % 5 === 0) saveDraft();
 
     // Nejudant / pauzės metu greitis 0
@@ -881,6 +1143,8 @@ function updateStats() {
     document.getElementById('statDistance').textContent = formatDist(currentLineData.distance);
     document.getElementById('statSpeed').textContent = fmtSpeedFor(currentLineData.activity, curSpeed);
     document.getElementById('statElevation').textContent = `${Math.round(currentLineData.elevationGain || 0)} m`;
+    document.getElementById('statMaxSpeed').textContent = maxSpeedMs > 0 ? fmtSpeedFor(currentLineData.activity, maxSpeedMs) : '--';
+    document.getElementById('statCalories').textContent = totalCalories > 0 ? Math.round(totalCalories) + ' kcal' : '0';
 }
 
 async function stopGps(save = true) {
@@ -917,6 +1181,9 @@ async function stopGps(save = true) {
     }
 
     line.duration = Math.round(totalElapsed);
+    line.maxSpeed = maxSpeedMs;
+    line.movingTime = Math.floor(movingMs / 1000);
+    line.calories = totalCalories;
     if (line.startedAt) line.endedAt = hm(new Date());
     const wasNew = line.isNew;
     const ok = await isaugotiISupabase(line);
@@ -943,8 +1210,10 @@ async function deleteLine(id) {
     if (mapHistory) renderHistoryPolylines();
 }
 
-document.getElementById('card-gpx').onclick = () => { if (cardLine) exportGpx(cardLine); };
-document.getElementById('card-rename').onclick = async () => {
+const cardGpxBtn = document.getElementById('card-gpx');
+if (cardGpxBtn) cardGpxBtn.onclick = () => { if (cardLine) exportGpx(cardLine); };
+const cardRenameBtn = document.getElementById('card-rename');
+if (cardRenameBtn) cardRenameBtn.onclick = async () => {
     if (!cardLine) return;
     const n = prompt('Naujas pavadinimas', cardLine.name);
     if (!n || !n.trim()) return;
@@ -954,6 +1223,7 @@ document.getElementById('card-rename').onclick = async () => {
     renderHistoryList();
     document.querySelectorAll('.act-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === cardLine.id));
 };
-document.getElementById('card-delete').onclick = () => {
+const cardDeleteBtn = document.getElementById('card-delete');
+if (cardDeleteBtn) cardDeleteBtn.onclick = () => {
     if (cardLine && confirm(`Ištrinti „${cardLine.name}“?`)) deleteLine(cardLine.id);
 };

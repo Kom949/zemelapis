@@ -103,7 +103,18 @@ input:focus, select:focus { border-color: var(--accent); }
 
 .gps-btn { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 14px; font-size: 15px; font-weight: 700; cursor: pointer; }
 .gps-btn:active { background: #1a5ccc; }
-.gps-btn.stop { background: var(--ink); margin-top: 14px; }
+.gps-btn.stop { background: var(--ink); }
+.gps-btn.pause { background: var(--bg); color: var(--ink); border: 1px solid var(--line); }
+
+/* Checkbox linija (automatinė pauzė ir pan.) */
+.checkbox-line { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.checkbox-line input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); }
+.checkbox-line input[type="number"] { width: 70px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.checkbox-line span { flex: 1; }
+
+/* Įrašymo metu – du mygtukai (pauzė + stop) greta */
+.live-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; margin-top: 14px; }
+.live-actions .gps-btn { margin-top: 0; }
 
 /* ---------- Įrašymo statistika ---------- */
 .live-top { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px; }
@@ -129,6 +140,37 @@ input:focus, select:focus { border-color: var(--accent); }
     background: var(--accent); color: #fff; border: none; border-radius: 999px;
     font-size: 14px; font-weight: 700; cursor: pointer;
 }
+
+/* ---------- Sporto tipų filtras žemėlapyje ---------- */
+.act-filter {
+    position: absolute; top: 48px; left: 10px; right: 52px; z-index: 1000;
+    display: flex; gap: 4px; overflow-x: auto; padding: 4px;
+    background: rgba(255,255,255,0.95); border: 1px solid var(--line);
+    border-radius: 999px; scrollbar-width: none; -ms-overflow-style: none;
+    max-width: calc(100vw - 62px);
+}
+.act-filter::-webkit-scrollbar { display: none; }
+.act-filter-btn {
+    display: flex; align-items: center; gap: 5px; padding: 6px 12px;
+    background: transparent; border: none; border-radius: 999px;
+    color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer;
+    white-space: nowrap; flex: none; transition: background .15s ease, color .15s ease;
+}
+.act-filter-btn svg { flex: none; }
+.act-filter-btn:hover { background: var(--bg); }
+.act-filter-btn.active { background: var(--accent); color: #fff; }
+.act-filter-btn .filter-count {
+    background: rgba(0,0,0,0.08); padding: 1px 6px; border-radius: 999px;
+    font-size: 10px; font-weight: 700;
+}
+.act-filter-btn.active .filter-count { background: rgba(255,255,255,0.25); }
+
+/* ---------- Statistikos suvestinė ---------- */
+.history-summary { display: flex; gap: 8px; padding: 8px 12px; background: #fff; border-bottom: 1px solid var(--line); }
+.history-summary > div { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.history-summary small { font-size: 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.history-summary b { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.history-summary span { font-size: 10px; color: var(--muted); }
 #history-list {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 1100;
     max-width: 520px; margin: 0 auto; height: 42%; max-height: 360px;
@@ -180,6 +222,39 @@ input:focus, select:focus { border-color: var(--accent); }
 .tile:nth-child(even) { padding-left: 16px; }
 .tile strong { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .delete-link { display: block; margin: 10px auto 0; background: none; border: none; color: var(--danger); font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px 12px; }
+
+/* ---------- Kilometrų analizė (splits) ---------- */
+.card-splits { margin-top: 10px; max-height: 180px; overflow-y: auto; }
+.card-splits:empty { display: none; }
+.split-head { display: flex; justify-content: space-between; padding: 4px 2px 6px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.split { display: grid; grid-template-columns: 36px 1fr 70px; gap: 8px; align-items: center; padding: 3px 2px; font-size: 13px; }
+.split .sk { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.split .sbar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.split .sbar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.split b { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.split.best b { color: var(--accent); }
+
+/* ---------- Veiksmų mygtukai (pervadinti / GPX) ---------- */
+.card-actions { display: flex; gap: 8px; margin-top: 10px; }
+.card-action-btn {
+    flex: 1; background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.card-action-btn:active { background: var(--line); }
+
+/* ---------- Leaflet popup pritaikymas mūsų stiliumi ---------- */
+.leaflet-popup-content-wrapper { border-radius: 10px !important; box-shadow: 0 4px 16px rgba(0,0,0,.15) !important; }
+.leaflet-popup-content { margin: 10px 12px !important; font-family: 'Barlow', sans-serif; }
+.crossing-popup { min-width: 200px; }
+.crossing-popup-head { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.crossing-item { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.crossing-item:last-child { border-bottom: none; }
+.crossing-item:hover { background: var(--bg); border-radius: 6px; }
+.crossing-dot { width: 26px; height: 26px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; color: #fff; }
+.crossing-info { flex: 1; min-width: 0; }
+.crossing-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crossing-meta { font-size: 11px; color: var(--muted); }
 
 
 /* ---------- Švelnesnis, bet „gyvas“ stilius ---------- */

@@ -72,6 +72,14 @@
                             <label><input type="radio" name="lineOption" value="continue"><span>Tęsti esamą</span></label>
                         </div>
                         <select id="lineSelect" class="hidden"></select>
+                        <label class="checkbox-line">
+                            <input type="checkbox" id="autoPauseChk" checked>
+                            <span>Automatinė pauzė (kai nejudama)</span>
+                        </label>
+                        <label class="checkbox-line">
+                            <span>Svoris kalorijoms skaičiuoti</span>
+                            <input type="number" id="weightInput" min="30" max="200" value="70" inputmode="numeric">
+                        </label>
                     </div>
                     <button id="gpsDrawBtn" class="gps-btn">Pradėti įrašymą</button>
                 </div>
@@ -84,8 +92,13 @@
                         <div class="live-stat"><span>Atstumas</span><b id="statDistance">0 m</b></div>
                         <div class="live-stat"><span id="lblSpeed">Tempas</span><b id="statSpeed">--</b></div>
                         <div class="live-stat"><span>Sukilimas</span><b id="statElevation">0 m</b></div>
+                        <div class="live-stat"><span>Maks. greitis</span><b id="statMaxSpeed">--</b></div>
+                        <div class="live-stat"><span>Kalorijos</span><b id="statCalories">0</b></div>
                     </div>
-                    <button id="stopBtn" class="gps-btn stop">Baigti įrašymą</button>
+                    <div class="live-actions">
+                        <button id="pauseBtn" class="gps-btn pause">Pauzė</button>
+                        <button id="stopBtn" class="gps-btn stop">Baigti įrašymą</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -94,6 +107,7 @@
         <div id="tab-history" class="tab-content">
             <div class="history-map-wrap">
                 <div id="map-history"></div>
+                <div id="activityFilter" class="act-filter"></div>
                 <button id="fitAllBtn" class="fab-chip" aria-label="Rodyti visus maršrutus">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
                 </button>
@@ -104,6 +118,7 @@
             </div>
             <div id="history-list">
                 <div class="list-head"><span>Mano veikla</span><button id="closeActBtn" aria-label="Uždaryti">&times;</button></div>
+                <div id="history-summary" class="history-summary"></div>
                 <div id="history-items"></div>
                 <div id="history-empty" class="hidden">Dar nėra išsaugotų įrašų</div>
             </div>
@@ -124,6 +139,13 @@
                 <div class="tile"><span>Trukmė</span><strong id="card-duration">-</strong></div>
                 <div class="tile"><span id="card-speed-label">Vid. tempas</span><strong id="card-speed">-</strong></div>
                 <div class="tile"><span>Sukilimas</span><strong id="card-elevation">-</strong></div>
+                <div class="tile"><span id="card-maxspeed-label">Maks. greitis</span><strong id="card-maxspeed">-</strong></div>
+                <div class="tile"><span>Kalorijos</span><strong id="card-calories">-</strong></div>
+            </div>
+            <div id="card-splits" class="card-splits"></div>
+            <div class="card-actions">
+                <button id="card-rename" type="button" class="card-action-btn">Pervadinti</button>
+                <button id="card-gpx" type="button" class="card-action-btn">Eksportuoti GPX</button>
             </div>
             <button id="card-delete" class="delete-link">Ištrinti įrašą</button>
         </div>
